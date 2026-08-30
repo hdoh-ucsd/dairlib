@@ -73,10 +73,23 @@ effort box, and sends it back to simulation. A two-second run completed with
 table is registered natively in Drake, avoiding the MJCF parser's broken
 multi-floating-body model-instance boundary.
 
-This is a closed gravity-hold loop, not yet task-space OSC: trajectory tracking
-and the first Sampling-C3+ solve remain open validation gates. The processes
-intentionally do not disguise the Franka binaries as xArm implementations. The
-pinned parser still reports unsupported features in the robot MJCF. The native
-T/table path removes the scenario-level collision-group and explicit-pair
-warnings, but rolling/torsional friction remains outside Drake's point-contact
-model and must be treated as a model difference.
+The processes intentionally do not disguise the Franka binaries as xArm
+implementations. The pinned parser still reports unsupported features in the
+robot MJCF. The native T/table path removes the scenario-level collision-group
+and explicit-pair warnings, but rolling/torsional friction remains outside
+Drake's point-contact model and must be treated as a model difference.
+
+The next gate adds translational task-space tracking using the unchanged
+DAIRLab gains `Kp = 200 I` and `Kd = 20 I`. The controller evaluates the
+configured tip point, computes its translational Jacobian, adds
+`J' (Kp e - Kd v)` to gravity compensation, and clips the result to the xArm
+effort box. In a five-second three-process test, a +10 mm x request produced a
++7.604 mm tip displacement.
+
+`xarm_sampling_c3_controller --first_solve_only` now completes one native C3+
+solve over a one-contact linearization. The contact gap uses the exact OIM T
+minimum-y boundary (-79.4 mm), the measured 5.55 mm pusher radius, physical
+T mass 0.1 kg, configured start/goal, five-knot horizon, 0.05 s planning step,
+and three ADMM iterations. This is the first-solve gate, not the final sampled
+multi-contact planner: it does not yet rebuild contact modes from live T state
+or publish its optimized plan into the task-space tracker.

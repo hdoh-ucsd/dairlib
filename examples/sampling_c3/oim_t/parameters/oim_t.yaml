@@ -46,6 +46,9 @@ task:
 controller:
   include_end_effector_orientation: false
   control_loop_delay_ms: 0
+  # DAIRLab Sampling-C3 OSC translational gains, carried over unchanged.
+  task_space_kp: [200.0, 200.0, 200.0]
+  task_space_kd: [20.0, 20.0, 20.0]
   sampling_c3_options_file: examples/sampling_c3/oim_t/parameters/sampling_c3plus_options.yaml
   sampling_params_file: examples/sampling_c3/oim_t/parameters/sampling_params.yaml
   reposition_params_file: examples/sampling_c3/oim_t/parameters/reposition_params.yaml
