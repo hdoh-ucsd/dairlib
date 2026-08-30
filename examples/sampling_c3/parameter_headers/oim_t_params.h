@@ -12,6 +12,7 @@ struct OimXarmRobotParams {
   std::vector<std::string> controlled_joints;
   Eigen::VectorXd home_positions, effort_limits, velocity_limits;
   Eigen::VectorXd velocity_servo_gains;
+  Eigen::VectorXd passive_stiffness;
   template <typename Archive> void Serialize(Archive* a) {
     a->Visit(DRAKE_NVP(model)); a->Visit(DRAKE_NVP(model_instance));
     a->Visit(DRAKE_NVP(end_effector_body));
@@ -20,6 +21,7 @@ struct OimXarmRobotParams {
     a->Visit(DRAKE_NVP(home_positions)); a->Visit(DRAKE_NVP(effort_limits));
     a->Visit(DRAKE_NVP(velocity_limits));
     a->Visit(DRAKE_NVP(velocity_servo_gains));
+    a->Visit(DRAKE_NVP(passive_stiffness));
   }
 };
 
@@ -108,4 +110,3 @@ struct OimTParams {
     a->Visit(DRAKE_NVP(lcm));
   }
 };
-

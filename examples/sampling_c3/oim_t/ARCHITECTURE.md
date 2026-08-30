@@ -58,10 +58,16 @@ canonical YAML, imports the xArm plant, recreates the five actuators omitted by
 the pinned Drake MJCF parser, and rejects a plant that violates the five-joint
 contract. `xarm_sim` additionally initializes and advances the physical scene.
 
+The compatibility layer restores the ignored joint-4 spring, configured joint
+velocity and actuator effort limits, and xArm gravity compensation. A one-second
+static hold has zero measured joint drift and leaves the T at its configured
+rest height.
+
 The controller entry points are startup/model-contract implementations, not
 yet closed-loop controllers: OSC wiring, LCM state/command routing, and the
 first Sampling-C3+ solve remain open validation gates. They intentionally do
 not disguise the Franka binaries as xArm implementations. The pinned parser
 also reports unsupported MJCF velocity actuators, collision filter groups,
-rolling/torsional friction, and several visualization-only tags. These semantic
-differences must be resolved before a manipulation result can be claimed.
+rolling/torsional friction and several visualization-only tags. The remaining
+contact semantic differences must be resolved before a manipulation result can
+be claimed.

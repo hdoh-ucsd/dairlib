@@ -14,6 +14,8 @@ robot:
   effort_limits: [50.0, 50.0, 32.0, 32.0, 32.0]
   velocity_limits: [0.5, 0.5, 0.5, 0.5, 0.5]
   velocity_servo_gains: [300.0, 300.0, 200.0, 200.0, 200.0]
+  # Recreates the source MJCF joint4 spring ignored by Drake's parser.
+  passive_stiffness: [0.0, 0.0, 0.0, 175.0, 0.0]
 
 simulation:
   scene_model: examples/sampling_c3/urdf/oim_xarm6_tabletop/xarm6_pusht_tabletop/open_table_sampling_c3plus.xml
