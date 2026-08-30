@@ -63,11 +63,20 @@ velocity and actuator effort limits, and xArm gravity compensation. A one-second
 static hold has zero measured joint drift and leaves the T at its configured
 rest height.
 
-The controller entry points are startup/model-contract implementations, not
-yet closed-loop controllers: OSC wiring, LCM state/command routing, and the
-first Sampling-C3+ solve remain open validation gates. They intentionally do
-not disguise the Franka binaries as xArm implementations. The pinned parser
-also reports unsupported MJCF velocity actuators, collision filter groups,
-rolling/torsional friction and several visualization-only tags. The remaining
-contact semantic differences must be resolved before a manipulation result can
-be claimed.
+The first closed-loop transport gate is also connected. `xarm_sim --lcm=true`
+publishes only the five selected xArm joints on `XARM_STATE_SIMULATION`, accepts
+five named actuator torques on `XARM_INPUT_SIMULATION`, and publishes the native
+Drake T state separately. `xarm_osc_controller` consumes each state message,
+recomputes gravity torque from that observed state, clips it to the configured
+effort box, and sends it back to simulation. A two-second run completed with
+0.000769446 rad maximum joint drift. The T is now a dedicated SDF model and the
+table is registered natively in Drake, avoiding the MJCF parser's broken
+multi-floating-body model-instance boundary.
+
+This is a closed gravity-hold loop, not yet task-space OSC: trajectory tracking
+and the first Sampling-C3+ solve remain open validation gates. The processes
+intentionally do not disguise the Franka binaries as xArm implementations. The
+pinned parser still reports unsupported features in the robot MJCF. The native
+T/table path removes the scenario-level collision-group and explicit-pair
+warnings, but rolling/torsional friction remains outside Drake's point-contact
+model and must be treated as a model difference.

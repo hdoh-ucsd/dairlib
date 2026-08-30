@@ -1,0 +1,36 @@
+<?xml version="1.0"?>
+<sdf version="1.7">
+  <model name="block">
+    <pose>0.381 0.400 0.0298 0 0 0</pose>
+    <link name="block">
+      <inertial>
+        <pose>0 -0.0149 0 0 0 0</pose>
+        <mass>0.1</mass>
+        <inertia>
+          <ixx>0.000119007</ixx><iyy>0.000064239</iyy>
+          <izz>0.000124043</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz>
+        </inertia>
+      </inertial>
+      <visual name="block_crossbar_visual">
+        <pose>0 0.0099 0 0 0 0</pose>
+        <geometry><box><size>0.089 0.0198 0.0596</size></box></geometry>
+        <material><diffuse>0.2 0.45 0.85 1</diffuse></material>
+      </visual>
+      <collision name="block_crossbar">
+        <pose>0 0.0099 0 0 0 0</pose>
+        <geometry><box><size>0.089 0.0198 0.0596</size></box></geometry>
+        <surface><friction><ode><mu>0.3</mu><mu2>0.3</mu2></ode></friction></surface>
+      </collision>
+      <visual name="block_stem_visual">
+        <pose>0 -0.0397 0 0 0 0</pose>
+        <geometry><box><size>0.0198 0.0794 0.0596</size></box></geometry>
+        <material><diffuse>0.2 0.45 0.85 1</diffuse></material>
+      </visual>
+      <collision name="block_stem">
+        <pose>0 -0.0397 0 0 0 0</pose>
+        <geometry><box><size>0.0198 0.0794 0.0596</size></box></geometry>
+        <surface><friction><ode><mu>0.3</mu><mu2>0.3</mu2></ode></friction></surface>
+      </collision>
+    </link>
+  </model>
+</sdf>

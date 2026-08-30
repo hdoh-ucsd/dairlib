@@ -28,6 +28,8 @@ cc_library(
     ],
     deps = [
         ":xarm_process_common",
+        "//systems:robot_lcm_systems",
+        "//systems/framework:lcm_driven_loop",
         "@drake//:drake_shared_library",
         "@gflags",
     ],

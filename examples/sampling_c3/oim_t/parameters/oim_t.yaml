@@ -28,7 +28,7 @@ simulation:
   visualize: false
 
 object:
-  model: examples/sampling_c3/urdf/oim_xarm6_tabletop/xarm6_pusht_tabletop/tee_sampling_c3plus.xml
+  model: examples/sampling_c3/urdf/oim_xarm6_tabletop/t_block.sdf
   model_instance: block
   body: block
   start_pose: [0.381, 0.400, 0.0]
