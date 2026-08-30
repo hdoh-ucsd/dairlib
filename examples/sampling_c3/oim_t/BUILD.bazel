@@ -31,6 +31,8 @@ cc_library(
         "//lcm:lcm_trajectory_saver",
         "//systems:robot_lcm_systems",
         "//systems/framework:lcm_driven_loop",
+        "//systems/controllers/osc:operational_space_control",
+        "//systems/controllers/osc:trans_space_tracking_data",
         "@drake//:drake_shared_library",
         "@c3//:libc3",
         "@gflags",

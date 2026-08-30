@@ -173,10 +173,16 @@ int DoMain(int argc, char* argv[]) {
     LcmTrajectory::Trajectory target;
     target.traj_name = "end_effector_position_target";
     target.datatypes = {"x", "y", "z"};
-    target.time_vector.resize(1);
+    // DAIRLab's LcmTrajectoryReceiver constructs a FirstOrderHold and
+    // therefore requires at least two samples. Repeat the step target over one
+    // planning interval; this remains a constant target for the old receiver.
+    target.time_vector.resize(2);
     target.time_vector[0] = state_subscriber.message().utime * 1e-6;
-    target.datapoints.resize(3, 1);
+    target.time_vector[1] =
+        target.time_vector[0] + params.task.planning_time_step;
+    target.datapoints.resize(3, 2);
     target.datapoints.col(0) = task_target;
+    target.datapoints.col(1) = task_target;
     LcmTrajectory trajectory({target}, {target.traj_name}, target.traj_name,
                              "OIM xArm task-space target", false);
     dairlib::lcmt_timestamped_saved_traj message;

@@ -119,7 +119,15 @@ activation tolerance define the transition; C3+ remains disabled until the
 physical tip reaches it. This keeps separated-contact LCS solutions from
 driving execution before their unilateral mode is physically meaningful.
 
-The remaining task-space block is still the provisional Jacobian-transpose
-law, not DAIRLab's inverse-dynamics `OperationalSpaceControl` QP. Matching the
-actuator contract does not make those upstream controllers equivalent; that QP
-port remains a separate validation gate.
+The task-space block now instantiates DAIRLab's inverse-dynamics
+`OperationalSpaceControl` QP on the five-joint xArm plant. Its translational
+tracking data uses the unchanged Sampling-C3 gains (`Kp=200 I`, `Kd=20 I`,
+`W=I`) and shared acceleration regularization (`1e-7 I`). The QP's total torque
+passes through the verified xArm servo bridge, with gravity removed before and
+restored after the source actuator clamp. The xArm configuration intentionally
+omits Franka-only orientation, elbow, and seven-joint objectives.
+
+A state-aware trajectory source holds the measured tip until the first valid
+planner trajectory arrives. Planner targets contain two identical knots over
+one planning interval because DAIRLab's first-order-hold receiver contract
+requires at least two samples.
