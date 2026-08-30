@@ -24,12 +24,16 @@ DEFINE_string(lcm_url, "udpm://239.255.76.67:7667?ttl=0", "LCM URL");
 
 namespace dairlib::oim {
 
-class XarmGravityController final : public drake::systems::LeafSystem<double> {
+class XarmVelocityServoController final
+    : public drake::systems::LeafSystem<double> {
  public:
-  XarmGravityController(const drake::multibody::MultibodyPlant<double>& plant,
-                        const OimTParams& params)
+  XarmVelocityServoController(
+      const drake::multibody::MultibodyPlant<double>& plant,
+      const OimTParams& params)
       : plant_(plant), context_(plant.CreateDefaultContext()),
         effort_limits_(params.robot.effort_limits),
+        velocity_limits_(params.robot.velocity_limits),
+        servo_gains_(params.robot.velocity_servo_gains),
         kp_(params.controller.task_space_kp),
         kd_(params.controller.task_space_kd),
         end_effector_(plant.GetBodyByName(params.robot.end_effector_body)),
@@ -40,7 +44,7 @@ class XarmGravityController final : public drake::systems::LeafSystem<double> {
                           plant.num_actuators()));
     this->DeclareVectorOutputPort(
         "xarm_torque", systems::TimestampedVector<double>(plant.num_actuators()),
-        &XarmGravityController::CalcTorque);
+        &XarmVelocityServoController::CalcTorque);
     this->DeclareAbstractInputPort(
         "task_space_trajectory",
         drake::Value<dairlib::lcmt_timestamped_saved_traj>{});
@@ -52,8 +56,11 @@ class XarmGravityController final : public drake::systems::LeafSystem<double> {
     const auto* state = dynamic_cast<const systems::OutputVector<double>*>(
         this->EvalVectorInput(context, 0));
     plant_.SetPositionsAndVelocities(context_.get(), state->GetState());
-    Eigen::VectorXd torque = -plant_.MakeActuationMatrix().transpose() *
+    const Eigen::VectorXd gravity_compensation =
+        -plant_.MakeActuationMatrix().transpose() *
         plant_.CalcGravityGeneralizedForces(*context_);
+    Eigen::VectorXd desired_servo_torque =
+        Eigen::VectorXd::Zero(plant_.num_actuators());
     const auto* target_message =
         this->EvalInputValue<dairlib::lcmt_timestamped_saved_traj>(context, 1);
     if (target_message != nullptr &&
@@ -84,14 +91,31 @@ class XarmGravityController final : public drake::systems::LeafSystem<double> {
             plant_.world_frame(), plant_.world_frame(), &J);
         const Eigen::Vector3d velocity =
             J * plant_.GetVelocities(*context_);
-        torque += J.transpose() *
-                  (kp_.asDiagonal() * (target - position) -
-                   kd_.asDiagonal() * velocity);
+        desired_servo_torque = J.transpose() *
+            (kp_.asDiagonal() * (target - position) -
+             kd_.asDiagonal() * velocity);
       }
     }
-    for (int i = 0; i < torque.size(); ++i) {
-      torque[i] = std::clamp(torque[i], -effort_limits_[i], effort_limits_[i]);
+
+    // Drake imports this MJCF actuator as a torque input. Reconstruct the
+    // source MuJoCo velocity actuator exactly around the upstream desired
+    // servo torque:
+    //   qdot_cmd = clamp(qdot + tau_desired / kv, +/- qdot_limit)
+    //   tau_servo = clamp(kv * (qdot_cmd - qdot), +/- effort_limit)
+    // Gravity compensation is a passive MuJoCo body force and therefore sits
+    // outside the actuator force clamp. Joint-4 stiffness is already a Drake
+    // passive force element and is intentionally not added here.
+    const Eigen::VectorXd velocity = plant_.GetVelocities(*context_);
+    Eigen::VectorXd servo_torque(plant_.num_actuators());
+    for (int i = 0; i < servo_torque.size(); ++i) {
+      const double velocity_command = std::clamp(
+          velocity[i] + desired_servo_torque[i] / servo_gains_[i],
+          -velocity_limits_[i], velocity_limits_[i]);
+      servo_torque[i] = std::clamp(
+          servo_gains_[i] * (velocity_command - velocity[i]),
+          -effort_limits_[i], effort_limits_[i]);
     }
+    const Eigen::VectorXd torque = servo_torque + gravity_compensation;
     output->SetDataVector(torque);
     output->set_timestamp(state->get_timestamp());
   }
@@ -99,6 +123,8 @@ class XarmGravityController final : public drake::systems::LeafSystem<double> {
   const drake::multibody::MultibodyPlant<double>& plant_;
   mutable std::unique_ptr<drake::systems::Context<double>> context_;
   Eigen::VectorXd effort_limits_;
+  Eigen::VectorXd velocity_limits_;
+  Eigen::VectorXd servo_gains_;
   Eigen::Vector3d kp_, kd_;
   const drake::multibody::RigidBody<double>& end_effector_;
   Eigen::Vector3d end_effector_point_;
@@ -123,7 +149,8 @@ int DoMain(int argc, char* argv[]) {
       drake::systems::lcm::LcmSubscriberSystem::Make<
           dairlib::lcmt_timestamped_saved_traj>(
           params.lcm.tracking_trajectory_channel, &lcm));
-  auto* controller = builder.AddSystem<XarmGravityController>(plant, params);
+  auto* controller =
+      builder.AddSystem<XarmVelocityServoController>(plant, params);
   auto* command_sender = builder.AddSystem<systems::RobotCommandSender>(plant);
   auto* command_pub = builder.AddSystem(
       drake::systems::lcm::LcmPublisherSystem::Make<dairlib::lcmt_robot_input>(
@@ -136,7 +163,7 @@ int DoMain(int argc, char* argv[]) {
   builder.Connect(command_sender->get_output_port(), command_pub->get_input_port());
 
   std::shared_ptr<drake::systems::Diagram<double>> diagram = builder.Build();
-  diagram->set_name("oim_xarm_gravity_controller");
+  diagram->set_name("oim_xarm_velocity_servo_controller");
   systems::LcmDrivenLoop<dairlib::lcmt_robot_output> loop(
       &lcm, diagram, state_receiver, params.lcm.robot_state_channel, true);
   loop.Simulate();

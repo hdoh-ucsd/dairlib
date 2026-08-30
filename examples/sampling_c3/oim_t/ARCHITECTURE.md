@@ -38,6 +38,13 @@
 - `xarm_osc_controller` converts those trajectories to five actuator torques.
   It must not retain Panda joint names, seven-DOF assumptions, or Panda limits.
 
+The Drake actuator port is torque-valued, while the source xArm actuator port
+is desired joint velocity. `xarm_osc_controller` preserves the source boundary
+explicitly: it inverts desired servo torque into
+`qdot_command = qdot + torque / kv`, applies the source velocity box, reapplies
+`kv * (qdot_command - qdot)`, and clips only that servo force. Gravity
+compensation is added outside the clamp and joint-4 stiffness remains passive.
+
 ## Validation gates
 
 1. The canonical YAML loads and all vector dimensions agree.
@@ -111,3 +118,8 @@ The configured measured pusher radius, free-space clearance, and 3 mm
 activation tolerance define the transition; C3+ remains disabled until the
 physical tip reaches it. This keeps separated-contact LCS solutions from
 driving execution before their unilateral mode is physically meaningful.
+
+The remaining task-space block is still the provisional Jacobian-transpose
+law, not DAIRLab's inverse-dynamics `OperationalSpaceControl` QP. Matching the
+actuator contract does not make those upstream controllers equivalent; that QP
+port remains a separate validation gate.
