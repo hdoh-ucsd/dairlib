@@ -52,7 +52,16 @@
 
 ## Current status
 
-The clean branch and canonical schema exist. The three native executables and
-vendored model targets remain to be implemented. Existing Franka binaries are
-unchanged and are not aliases for the xArm processes.
+The clean branch now contains the three named native process entry points and
+the narrowly vendored open-table OIM-T model. Each entry point loads the one
+canonical YAML, imports the xArm plant, recreates the five actuators omitted by
+the pinned Drake MJCF parser, and rejects a plant that violates the five-joint
+contract. `xarm_sim` additionally initializes and advances the physical scene.
 
+The controller entry points are startup/model-contract implementations, not
+yet closed-loop controllers: OSC wiring, LCM state/command routing, and the
+first Sampling-C3+ solve remain open validation gates. They intentionally do
+not disguise the Franka binaries as xArm implementations. The pinned parser
+also reports unsupported MJCF velocity actuators, collision filter groups,
+rolling/torsional friction, and several visualization-only tags. These semantic
+differences must be resolved before a manipulation result can be claimed.

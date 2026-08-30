@@ -9,3 +9,30 @@ cc_binary(
     ],
 )
 
+cc_library(
+    name = "xarm_process_common",
+    srcs = ["xarm_process_common.cc"],
+    hdrs = ["xarm_process_common.h"],
+    deps = [
+        "//examples/sampling_c3/parameter_headers:oim_t_params",
+        "@drake//:drake_shared_library",
+    ],
+)
+
+[cc_binary(
+    name = process,
+    srcs = [process + ".cc"],
+    data = [
+        "parameters/oim_t.yaml",
+        "//examples/sampling_c3:urdfs",
+    ],
+    deps = [
+        ":xarm_process_common",
+        "@drake//:drake_shared_library",
+        "@gflags",
+    ],
+) for process in [
+    "xarm_sim",
+    "xarm_osc_controller",
+    "xarm_sampling_c3_controller",
+]]

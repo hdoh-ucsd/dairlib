@@ -16,7 +16,7 @@ robot:
   velocity_servo_gains: [300.0, 300.0, 200.0, 200.0, 200.0]
 
 simulation:
-  scene_model: examples/sampling_c3/urdf/oim_xarm6_tabletop/open_table.xml
+  scene_model: examples/sampling_c3/urdf/oim_xarm6_tabletop/xarm6_pusht_tabletop/open_table_sampling_c3plus.xml
   time_step: 0.002
   realtime_rate: 1.0
   actuator_delay: 0.0
@@ -26,7 +26,7 @@ simulation:
   visualize: false
 
 object:
-  model: examples/sampling_c3/urdf/oim_xarm6_tabletop/t_block.sdf
+  model: examples/sampling_c3/urdf/oim_xarm6_tabletop/xarm6_pusht_tabletop/tee_sampling_c3plus.xml
   model_instance: block
   body: block
   start_pose: [0.381, 0.400, 0.0]
@@ -58,4 +58,3 @@ lcm:
   object_state_channel: OIM_T_STATE_SIMULATION
   tracking_trajectory_channel: OIM_XARM_TRAJECTORY
   osc_debug_channel: OIM_XARM_OSC_DEBUG
-
