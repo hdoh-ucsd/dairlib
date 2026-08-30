@@ -96,6 +96,10 @@ and three ADMM iterations.
 checkpoint. It consumes the live xArm tip and native T pose, transforms eight
 samples on the exact two-box T boundary into world coordinates, solves one
 one-contact C3+ candidate per sample, selects the finite candidate with the
-smallest predicted object-position error, and publishes a step-limited first
-pusher target to the task-space tracker. This is a one-shot sampled plan. It is
-not yet a continuously replanning, rotational, multi-contact pushing policy.
+smallest predicted object-position error, and publishes a step-limited pusher
+target to the task-space tracker. `--live_control_steps` repeats that operation
+from refreshed state at `--live_step_period_ms`. This is not yet a complete
+contact-acquisition policy: the separated one-contact LCS has no tangential
+alignment objective, and its complementarity force is inactive while the
+normal gap is positive. It is also not yet a rotational or multi-contact
+pushing policy.

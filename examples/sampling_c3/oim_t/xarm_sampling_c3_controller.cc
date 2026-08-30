@@ -1,8 +1,8 @@
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <iostream>
 #include <limits>
-#include <thread>
 
 #include <Eigen/Geometry>
 
@@ -31,6 +31,10 @@ DEFINE_bool(first_solve_only, false,
             "Run one exact-T linearized Sampling-C3+ solve and exit");
 DEFINE_bool(live_sampled_plan, false,
             "Sample exact-T boundary contacts from live state and publish");
+DEFINE_int32(live_control_steps, 1,
+             "Number of live sampled-plan control steps");
+DEFINE_int32(live_step_period_ms, 500,
+             "State refresh and target hold period for each live step");
 
 namespace dairlib::oim {
 
@@ -163,9 +167,27 @@ int DoMain(int argc, char* argv[]) {
     lcm.HandleSubscriptions(100);
   }
 
-  Eigen::Vector3d task_target =
-      home_tip + Eigen::Vector3d(FLAGS_smoke_offset_x, 0.0, 0.0);
-  if (FLAGS_live_sampled_plan) {
+  auto publish_target = [&](const Eigen::Vector3d& task_target,
+                            int publish_count) {
+    LcmTrajectory::Trajectory target;
+    target.traj_name = "end_effector_position_target";
+    target.datatypes = {"x", "y", "z"};
+    target.time_vector.resize(1);
+    target.time_vector[0] = state_subscriber.message().utime * 1e-6;
+    target.datapoints.resize(3, 1);
+    target.datapoints.col(0) = task_target;
+    LcmTrajectory trajectory({target}, {target.traj_name}, target.traj_name,
+                             "OIM xArm task-space target", false);
+    dairlib::lcmt_timestamped_saved_traj message;
+    message.utime = state_subscriber.message().utime;
+    message.saved_traj = trajectory.GenerateLcmObject();
+    for (int i = 0; i < publish_count; ++i) {
+      drake::lcm::Publish(&lcm, params.lcm.tracking_trajectory_channel, message);
+      lcm.HandleSubscriptions(10);
+    }
+  };
+
+  auto solve_live_target = [&](int step_index) {
     const auto& robot_message = state_subscriber.message();
     for (int i = 0; i < robot_message.num_positions; ++i) {
       plant.GetJointByName(robot_message.position_names[i])
@@ -225,28 +247,28 @@ int DoMain(int argc, char* argv[]) {
     if (step.norm() > params.controller.task_space_plan_step_limit) {
       step *= params.controller.task_space_plan_step_limit / step.norm();
     }
+    Eigen::Vector3d task_target = live_tip;
     task_target.head<2>() = live_tip.head<2>() + step;
     task_target.z() = live_tip.z();
-    std::cout << "live_sampled_c3plus=PASS contact=" << best_name
+    std::cout << "live_sampled_c3plus=PASS step=" << step_index
+              << " contact=" << best_name
               << " gap_m=" << best.gap << " target_W="
               << task_target.transpose() << std::endl;
-  }
+    return task_target;
+  };
 
-  LcmTrajectory::Trajectory target;
-  target.traj_name = "end_effector_position_target";
-  target.datatypes = {"x", "y", "z"};
-  target.time_vector.resize(1);
-  target.time_vector[0] = state_subscriber.message().utime * 1e-6;
-  target.datapoints.resize(3, 1);
-  target.datapoints.col(0) = task_target;
-  LcmTrajectory trajectory({target}, {target.traj_name}, target.traj_name,
-                           "OIM xArm task-space target", false);
-  dairlib::lcmt_timestamped_saved_traj message;
-  message.utime = state_subscriber.message().utime;
-  message.saved_traj = trajectory.GenerateLcmObject();
-  for (int i = 0; i < FLAGS_publish_count; ++i) {
-    drake::lcm::Publish(&lcm, params.lcm.tracking_trajectory_channel, message);
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  if (FLAGS_live_sampled_plan) {
+    if (FLAGS_live_control_steps <= 0 || FLAGS_live_step_period_ms <= 0) {
+      throw std::runtime_error("live step count and period must be positive");
+    }
+    const int publishes_per_step =
+        std::max(1, FLAGS_live_step_period_ms / 10);
+    for (int i = 0; i < FLAGS_live_control_steps; ++i) {
+      publish_target(solve_live_target(i), publishes_per_step);
+    }
+  } else {
+    publish_target(home_tip + Eigen::Vector3d(FLAGS_smoke_offset_x, 0.0, 0.0),
+                   FLAGS_publish_count);
   }
   return 0;
 }
