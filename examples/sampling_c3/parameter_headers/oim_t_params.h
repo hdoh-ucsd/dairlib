@@ -68,6 +68,7 @@ struct OimControllerParams {
   bool include_end_effector_orientation{};
   int control_loop_delay_ms{};
   Eigen::Vector3d task_space_kp, task_space_kd;
+  double task_space_plan_step_limit{};
   std::string sampling_c3_options_file, sampling_params_file;
   std::string reposition_params_file, progress_params_file, osc_params_file;
   std::string osqp_settings_file, osc_qp_settings_file;
@@ -76,6 +77,7 @@ struct OimControllerParams {
     a->Visit(DRAKE_NVP(control_loop_delay_ms));
     a->Visit(DRAKE_NVP(task_space_kp));
     a->Visit(DRAKE_NVP(task_space_kd));
+    a->Visit(DRAKE_NVP(task_space_plan_step_limit));
     a->Visit(DRAKE_NVP(sampling_c3_options_file));
     a->Visit(DRAKE_NVP(sampling_params_file));
     a->Visit(DRAKE_NVP(reposition_params_file));

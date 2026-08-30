@@ -1,8 +1,13 @@
 #include <chrono>
+#include <cmath>
 #include <iostream>
+#include <limits>
 #include <thread>
 
+#include <Eigen/Geometry>
+
 #include <dairlib/lcmt_robot_output.hpp>
+#include <dairlib/lcmt_object_state.hpp>
 #include <dairlib/lcmt_timestamped_saved_traj.hpp>
 #include <drake/lcm/drake_lcm.h>
 #include <drake/multibody/parsing/parser.h>
@@ -24,10 +29,24 @@ DEFINE_double(smoke_offset_x, 0.0,
 DEFINE_int32(publish_count, 100, "Number of trajectory messages to publish");
 DEFINE_bool(first_solve_only, false,
             "Run one exact-T linearized Sampling-C3+ solve and exit");
+DEFINE_bool(live_sampled_plan, false,
+            "Sample exact-T boundary contacts from live state and publish");
 
 namespace dairlib::oim {
 
-void RunFirstC3PlusSolve(const OimTParams& params) {
+struct ContactSolveResult {
+  bool finite{};
+  double elapsed{};
+  double gap{};
+  Eigen::Vector2d pusher_target;
+  Eigen::Vector2d object_prediction;
+};
+
+ContactSolveResult SolveOneContact(const OimTParams& params,
+                                   const Eigen::Vector2d& pusher,
+                                   const Eigen::Vector2d& object,
+                                   const Eigen::Vector2d& normal_W,
+                                   const Eigen::Vector2d& boundary_W) {
   constexpr int n = 8, k = 2, m = 1, N = 5;
   const double dt = params.task.planning_time_step;
   const double pusher_mass = 1.0;
@@ -38,23 +57,22 @@ void RunFirstC3PlusSolve(const OimTParams& params) {
   B(4, 0) = dt / pusher_mass;
   B(5, 1) = dt / pusher_mass;
   Eigen::MatrixXd D = Eigen::MatrixXd::Zero(n, m);
-  D(5, 0) = -dt / pusher_mass;
-  D(7, 0) = dt / object_mass;
+  D.block<2, 1>(4, 0) = dt / pusher_mass * normal_W;
+  D.block<2, 1>(6, 0) = -dt / object_mass * normal_W;
   Eigen::MatrixXd E = Eigen::MatrixXd::Zero(m, n);
-  E(0, 1) = -1.0;
-  E(0, 3) = 1.0;
+  E.block<1, 2>(0, 0) = normal_W.transpose();
+  E.block<1, 2>(0, 2) = -normal_W.transpose();
   // Small compliance keeps the one-contact projection well-conditioned while
   // retaining a stiff unilateral contact for this first linearized solve.
   Eigen::MatrixXd F = 1.0e-3 * Eigen::MatrixXd::Identity(m, m);
   Eigen::MatrixXd H = Eigen::MatrixXd::Zero(m, k);
-  // Exact OIM T minimum-y footprint (-79.4 mm) plus the 5.55 mm pusher radius.
   Eigen::VectorXd c(1);
-  c[0] = -0.0794 - 0.00555;
+  c[0] = -normal_W.dot(boundary_W) - 0.00555;
   c3::LCS lcs(A, B, D, Eigen::VectorXd::Zero(n), E, F, H, c, N, dt);
 
   Eigen::VectorXd x0 = Eigen::VectorXd::Zero(n);
-  x0.segment<2>(0) << 0.254967, -0.000911;
-  x0.segment<2>(2) = params.object.start_pose.head<2>();
+  x0.segment<2>(0) = pusher;
+  x0.segment<2>(2) = object;
   Eigen::VectorXd xd = x0;
   xd.segment<2>(2) = params.object.goal_pose.head<2>();
   std::vector<Eigen::VectorXd> desired(N + 1, xd);
@@ -92,19 +110,29 @@ void RunFirstC3PlusSolve(const OimTParams& params) {
   for (const auto& input : inputs) finite = finite && input.allFinite();
   if (!finite) {
     std::cerr << "C3+ non-finite diagnostic:";
-    for (int i = 0; i < states.size(); ++i) {
+    for (std::size_t i = 0; i < states.size(); ++i) {
       std::cerr << " x" << i << "=" << states[i].transpose();
     }
-    for (int i = 0; i < inputs.size(); ++i) {
+    for (std::size_t i = 0; i < inputs.size(); ++i) {
       std::cerr << " u" << i << "=" << inputs[i].transpose();
     }
     std::cerr << std::endl;
-    throw std::runtime_error("first Sampling-C3+ solution is not finite");
+    return ContactSolveResult{};
   }
-  std::cout << "first_c3plus_solve=PASS elapsed_s=" << elapsed
-            << " final_stored_object_xy="
-            << states[N - 1].segment<2>(2).transpose()
-            << " contact_gap_m=" << (E * x0 + c)[0] << std::endl;
+  return ContactSolveResult{true, elapsed, (E * x0 + c)[0],
+                            states[std::min(2, N - 1)].segment<2>(0),
+                            states[N - 1].segment<2>(2)};
+}
+
+void RunFirstC3PlusSolve(const OimTParams& params) {
+  const auto result = SolveOneContact(
+      params, Eigen::Vector2d(0.254967, -0.000911),
+      params.object.start_pose.head<2>(), Eigen::Vector2d(0.0, -1.0),
+      Eigen::Vector2d(0.0, -0.0794));
+  if (!result.finite) throw std::runtime_error("first C3+ solve failed");
+  std::cout << "first_c3plus_solve=PASS elapsed_s=" << result.elapsed
+            << " final_stored_object_xy=" << result.object_prediction.transpose()
+            << " contact_gap_m=" << result.gap << std::endl;
 }
 
 int DoMain(int argc, char* argv[]) {
@@ -129,7 +157,80 @@ int DoMain(int argc, char* argv[]) {
   drake::lcm::DrakeLcm lcm(FLAGS_lcm_url);
   systems::Subscriber<dairlib::lcmt_robot_output> state_subscriber(
       &lcm, params.lcm.robot_state_channel);
-  while (state_subscriber.count() == 0) lcm.HandleSubscriptions(100);
+  systems::Subscriber<dairlib::lcmt_object_state> object_subscriber(
+      &lcm, params.lcm.object_state_channel);
+  while (state_subscriber.count() == 0 || object_subscriber.count() == 0) {
+    lcm.HandleSubscriptions(100);
+  }
+
+  Eigen::Vector3d task_target =
+      home_tip + Eigen::Vector3d(FLAGS_smoke_offset_x, 0.0, 0.0);
+  if (FLAGS_live_sampled_plan) {
+    const auto& robot_message = state_subscriber.message();
+    for (int i = 0; i < robot_message.num_positions; ++i) {
+      plant.GetJointByName(robot_message.position_names[i])
+          .SetPositions(context.get(), Eigen::VectorXd::Constant(
+                                          1, robot_message.position[i]));
+    }
+    const Eigen::Vector3d live_tip =
+        plant.EvalBodyPoseInWorld(
+            *context, plant.GetBodyByName(params.robot.end_effector_body)) *
+        params.robot.end_effector_point;
+    const auto& object_message = object_subscriber.message();
+    auto position_value = [&](const std::string& name) {
+      for (int i = 0; i < object_message.num_positions; ++i) {
+        if (object_message.position_names[i] == name)
+          return object_message.position[i];
+      }
+      throw std::runtime_error("live T state missing " + name);
+    };
+    const Eigen::Vector2d object_xy(position_value("block_x"),
+                                    position_value("block_y"));
+    const double qw = position_value("block_qw");
+    const double qx = position_value("block_qx");
+    const double qy = position_value("block_qy");
+    const double qz = position_value("block_qz");
+    const double yaw = std::atan2(2.0 * (qw * qz + qx * qy),
+                                  1.0 - 2.0 * (qy * qy + qz * qz));
+    const Eigen::Rotation2Dd R_WO(yaw);
+    struct Sample { Eigen::Vector2d point, normal; const char* name; };
+    const std::vector<Sample> samples = {
+        {{-0.0445, 0.0198}, {0, 1}, "crossbar_top_left"},
+        {{0.0, 0.0198}, {0, 1}, "crossbar_top"},
+        {{0.0445, 0.0198}, {0, 1}, "crossbar_top_right"},
+        {{-0.0445, 0.0099}, {-1, 0}, "crossbar_left"},
+        {{0.0445, 0.0099}, {1, 0}, "crossbar_right"},
+        {{-0.0099, -0.0397}, {-1, 0}, "stem_left"},
+        {{0.0099, -0.0397}, {1, 0}, "stem_right"},
+        {{0.0, -0.0794}, {0, -1}, "stem_bottom"}};
+    ContactSolveResult best;
+    double best_cost = std::numeric_limits<double>::infinity();
+    const char* best_name = "none";
+    for (const auto& sample : samples) {
+      const auto result = SolveOneContact(
+          params, live_tip.head<2>(), object_xy, R_WO * sample.normal,
+          R_WO * sample.point);
+      if (!result.finite) continue;
+      const double cost =
+          (result.object_prediction - params.object.goal_pose.head<2>())
+              .squaredNorm();
+      if (cost < best_cost) {
+        best = result;
+        best_cost = cost;
+        best_name = sample.name;
+      }
+    }
+    if (!best.finite) throw std::runtime_error("all live C3+ samples failed");
+    Eigen::Vector2d step = best.pusher_target - live_tip.head<2>();
+    if (step.norm() > params.controller.task_space_plan_step_limit) {
+      step *= params.controller.task_space_plan_step_limit / step.norm();
+    }
+    task_target.head<2>() = live_tip.head<2>() + step;
+    task_target.z() = live_tip.z();
+    std::cout << "live_sampled_c3plus=PASS contact=" << best_name
+              << " gap_m=" << best.gap << " target_W="
+              << task_target.transpose() << std::endl;
+  }
 
   LcmTrajectory::Trajectory target;
   target.traj_name = "end_effector_position_target";
@@ -137,8 +238,7 @@ int DoMain(int argc, char* argv[]) {
   target.time_vector.resize(1);
   target.time_vector[0] = state_subscriber.message().utime * 1e-6;
   target.datapoints.resize(3, 1);
-  target.datapoints.col(0) =
-      home_tip + Eigen::Vector3d(FLAGS_smoke_offset_x, 0.0, 0.0);
+  target.datapoints.col(0) = task_target;
   LcmTrajectory trajectory({target}, {target.traj_name}, target.traj_name,
                            "OIM xArm task-space target", false);
   dairlib::lcmt_timestamped_saved_traj message;

@@ -86,10 +86,16 @@ configured tip point, computes its translational Jacobian, adds
 effort box. In a five-second three-process test, a +10 mm x request produced a
 +7.604 mm tip displacement.
 
-`xarm_sampling_c3_controller --first_solve_only` now completes one native C3+
+`xarm_sampling_c3_controller --first_solve_only` completes one native C3+
 solve over a one-contact linearization. The contact gap uses the exact OIM T
 minimum-y boundary (-79.4 mm), the measured 5.55 mm pusher radius, physical
 T mass 0.1 kg, configured start/goal, five-knot horizon, 0.05 s planning step,
-and three ADMM iterations. This is the first-solve gate, not the final sampled
-multi-contact planner: it does not yet rebuild contact modes from live T state
-or publish its optimized plan into the task-space tracker.
+and three ADMM iterations.
+
+`xarm_sampling_c3_controller --live_sampled_plan=true` is the next closed-loop
+checkpoint. It consumes the live xArm tip and native T pose, transforms eight
+samples on the exact two-box T boundary into world coordinates, solves one
+one-contact C3+ candidate per sample, selects the finite candidate with the
+smallest predicted object-position error, and publishes a step-limited first
+pusher target to the task-space tracker. This is a one-shot sampled plan. It is
+not yet a continuously replanning, rotational, multi-contact pushing policy.

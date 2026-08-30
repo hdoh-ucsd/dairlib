@@ -32,6 +32,9 @@ OimTParams LoadAndValidateConfig(const std::string& path) {
   if (params.simulation.time_step != params.task.execution_time_step) {
     throw std::runtime_error("simulation and execution time steps differ");
   }
+  if (params.controller.task_space_plan_step_limit <= 0.0) {
+    throw std::runtime_error("task_space_plan_step_limit must be positive");
+  }
   return params;
 }
 
