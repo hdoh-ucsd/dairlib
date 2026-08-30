@@ -1,4 +1,11 @@
 cc_library(
+    name = "oim_t_params",
+    hdrs = ["oim_t_params.h"],
+    visibility = ["//visibility:public"],
+    deps = ["@drake//:drake_shared_library"],
+)
+
+cc_library(
     name = "sampling_c3_options",
     hdrs = ["sampling_c3_options.h"],
     visibility = ["//visibility:public"],  # Allow all subpackages to use it

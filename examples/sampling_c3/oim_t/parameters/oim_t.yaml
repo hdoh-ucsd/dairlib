@@ -1,0 +1,61 @@
+# Canonical native C++ configuration for the OIM T-on-table task.
+# Replaces the legacy sim_params.yaml, goal_params.yaml, and
+# sampling_c3_controller_params.yaml inputs for the xArm executables.
+
+scenario_name: open_table
+
+robot:
+  model: examples/sampling_c3/urdf/oim_xarm6_tabletop/xarm6/xarm6.xml
+  model_instance: xarm6_stick
+  end_effector_body: xarm6_stick
+  end_effector_point: [0.0, 0.0, 0.1794]
+  controlled_joints: [xarm6_joint1, xarm6_joint2, xarm6_joint3, xarm6_joint4, xarm6_joint5]
+  home_positions: [0.0, -0.7853981633974483, -0.7853981633974483, 0.0, 1.5707963267948966]
+  effort_limits: [50.0, 50.0, 32.0, 32.0, 32.0]
+  velocity_limits: [0.5, 0.5, 0.5, 0.5, 0.5]
+  velocity_servo_gains: [300.0, 300.0, 200.0, 200.0, 200.0]
+
+simulation:
+  scene_model: examples/sampling_c3/urdf/oim_xarm6_tabletop/open_table.xml
+  time_step: 0.002
+  realtime_rate: 1.0
+  actuator_delay: 0.0
+  robot_publish_rate: 500.0
+  object_publish_rate: 20.0
+  publish_efforts: true
+  visualize: false
+
+object:
+  model: examples/sampling_c3/urdf/oim_xarm6_tabletop/t_block.sdf
+  model_instance: block
+  body: block
+  start_pose: [0.381, 0.400, 0.0]
+  goal_pose: [0.381, -0.400, 3.1416]
+  resting_height: 0.0298
+
+task:
+  pose_frame: oim_world
+  translation_tolerance: 0.05
+  orientation_tolerance: 0.10
+  run_steps: 2000
+  planning_time_step: 0.05
+  execution_time_step: 0.002
+
+controller:
+  include_end_effector_orientation: false
+  control_loop_delay_ms: 0
+  sampling_c3_options_file: examples/sampling_c3/oim_t/parameters/sampling_c3plus_options.yaml
+  sampling_params_file: examples/sampling_c3/oim_t/parameters/sampling_params.yaml
+  reposition_params_file: examples/sampling_c3/oim_t/parameters/reposition_params.yaml
+  progress_params_file: examples/sampling_c3/oim_t/parameters/progress_params.yaml
+  osc_params_file: examples/sampling_c3/oim_t/parameters/osc_params.yaml
+  osqp_settings_file: solvers/osqp_options_default.yaml
+  osc_qp_settings_file: solvers/default_osc_osqp_settings.yaml
+
+lcm:
+  robot_input_channel: XARM_INPUT_SIMULATION
+  robot_state_channel: XARM_STATE_SIMULATION
+  object_state_channel: OIM_T_STATE_SIMULATION
+  tracking_trajectory_channel: OIM_XARM_TRAJECTORY
+  osc_debug_channel: OIM_XARM_OSC_DEBUG
+

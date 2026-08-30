@@ -1,0 +1,11 @@
+cc_binary(
+    name = "oim_t_config_check",
+    srcs = ["oim_t_config_check.cc"],
+    data = ["parameters/oim_t.yaml"],
+    deps = [
+        "//examples/sampling_c3/parameter_headers:oim_t_params",
+        "@drake//:drake_shared_library",
+        "@gflags",
+    ],
+)
+
