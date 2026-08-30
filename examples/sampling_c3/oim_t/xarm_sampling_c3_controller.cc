@@ -35,6 +35,7 @@ DEFINE_int32(live_control_steps, 1,
              "Number of live sampled-plan control steps");
 DEFINE_int32(live_step_period_ms, 500,
              "State refresh and target hold period for each live step");
+DEFINE_int32(live_log_every, 100, "Log every N live control steps");
 
 namespace dairlib::oim {
 
@@ -71,7 +72,7 @@ ContactSolveResult SolveOneContact(const OimTParams& params,
   Eigen::MatrixXd F = 1.0e-3 * Eigen::MatrixXd::Identity(m, m);
   Eigen::MatrixXd H = Eigen::MatrixXd::Zero(m, k);
   Eigen::VectorXd c(1);
-  c[0] = -normal_W.dot(boundary_W) - 0.00555;
+  c[0] = -normal_W.dot(boundary_W) - params.controller.pusher_radius;
   c3::LCS lcs(A, B, D, Eigen::VectorXd::Zero(n), E, F, H, c, N, dt);
 
   Eigen::VectorXd x0 = Eigen::VectorXd::Zero(n);
@@ -208,6 +209,7 @@ int DoMain(int argc, char* argv[]) {
     };
     const Eigen::Vector2d object_xy(position_value("block_x"),
                                     position_value("block_y"));
+    const double object_z = position_value("block_z");
     const double qw = position_value("block_qw");
     const double qx = position_value("block_qx");
     const double qy = position_value("block_qy");
@@ -225,6 +227,64 @@ int DoMain(int argc, char* argv[]) {
         {{-0.0099, -0.0397}, {-1, 0}, "stem_left"},
         {{0.0099, -0.0397}, {1, 0}, "stem_right"},
         {{0.0, -0.0794}, {0, -1}, "stem_bottom"}};
+
+    // A separated unilateral LCS cannot create contact by itself. Select the
+    // face whose reaction on the object (-normal) best matches the goal
+    // direction, breaking equal-face ties by pusher proximity, and explicitly
+    // align the physical tip with that world-frame contact before solving C3+.
+    Eigen::Vector2d goal_direction =
+        params.object.goal_pose.head<2>() - object_xy;
+    if (goal_direction.norm() > 0.0) goal_direction.normalize();
+    const Sample* approach_sample = nullptr;
+    Eigen::Vector2d approach_point_W;
+    double approach_score = -std::numeric_limits<double>::infinity();
+    for (const auto& sample : samples) {
+      const Eigen::Vector2d normal_W = R_WO * sample.normal;
+      const Eigen::Vector2d point_W =
+          object_xy + R_WO * sample.point +
+          normal_W * (params.controller.pusher_radius +
+                      params.controller.approach_clearance);
+      const double score =
+          (-normal_W).dot(goal_direction) - 1.0e-3 *
+          (point_W - live_tip.head<2>()).squaredNorm();
+      if (score > approach_score) {
+        approach_score = score;
+        approach_sample = &sample;
+        approach_point_W = point_W;
+      }
+    }
+    if (approach_sample == nullptr) {
+      throw std::runtime_error("no exact-T approach sample available");
+    }
+    Eigen::Vector3d approach_target(approach_point_W.x(), approach_point_W.y(),
+                                    object_z);
+    const Eigen::Vector3d approach_error = approach_target - live_tip;
+    const bool contact_ready =
+        approach_error.norm() <= params.controller.contact_activation_tolerance;
+    const bool log_step = FLAGS_live_log_every > 0 &&
+        (step_index % FLAGS_live_log_every == 0 ||
+         step_index + 1 == FLAGS_live_control_steps);
+    if (!contact_ready) {
+      Eigen::Vector3d task_target = live_tip;
+      Eigen::Vector3d step = approach_error;
+      if (step.norm() > params.controller.task_space_plan_step_limit) {
+        step *= params.controller.task_space_plan_step_limit / step.norm();
+      }
+      task_target += step;
+      if (log_step) {
+        const Eigen::Vector2d normal_W = R_WO * approach_sample->normal;
+        const double gap = normal_W.dot(live_tip.head<2>() - object_xy) -
+            normal_W.dot(R_WO * approach_sample->point) -
+            params.controller.pusher_radius;
+        std::cout << "live_sampled_c3plus=PASS step=" << step_index
+                  << " phase=approach contact=" << approach_sample->name
+                  << " gap_m=" << gap
+                  << " approach_error_m=" << approach_error.norm()
+                  << " target_W=" << task_target.transpose() << std::endl;
+      }
+      return task_target;
+    }
+
     ContactSolveResult best;
     double best_cost = std::numeric_limits<double>::infinity();
     const char* best_name = "none";
@@ -250,16 +310,19 @@ int DoMain(int argc, char* argv[]) {
     Eigen::Vector3d task_target = live_tip;
     task_target.head<2>() = live_tip.head<2>() + step;
     task_target.z() = live_tip.z();
-    std::cout << "live_sampled_c3plus=PASS step=" << step_index
-              << " contact=" << best_name
-              << " gap_m=" << best.gap << " target_W="
-              << task_target.transpose() << std::endl;
+    if (log_step) {
+      std::cout << "live_sampled_c3plus=PASS step=" << step_index
+                << " phase=contact contact=" << best_name
+                << " gap_m=" << best.gap << " target_W="
+                << task_target.transpose() << std::endl;
+    }
     return task_target;
   };
 
   if (FLAGS_live_sampled_plan) {
-    if (FLAGS_live_control_steps <= 0 || FLAGS_live_step_period_ms <= 0) {
-      throw std::runtime_error("live step count and period must be positive");
+    if (FLAGS_live_control_steps <= 0 || FLAGS_live_step_period_ms <= 0 ||
+        FLAGS_live_log_every < 0) {
+      throw std::runtime_error("invalid live step count, period, or log rate");
     }
     const int publishes_per_step =
         std::max(1, FLAGS_live_step_period_ms / 10);

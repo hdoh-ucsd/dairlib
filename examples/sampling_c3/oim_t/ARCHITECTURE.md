@@ -103,3 +103,11 @@ contact-acquisition policy: the separated one-contact LCS has no tangential
 alignment objective, and its complementarity force is inactive while the
 normal gap is positive. It is also not yet a rotational or multi-contact
 pushing policy.
+
+The acquisition gate now explicitly selects the boundary whose object reaction
+direction best matches the live goal displacement, breaks equal-face ties by
+tip proximity, and approaches that boundary in three-dimensional task space.
+The configured measured pusher radius, free-space clearance, and 3 mm
+activation tolerance define the transition; C3+ remains disabled until the
+physical tip reaches it. This keeps separated-contact LCS solutions from
+driving execution before their unilateral mode is physically meaningful.

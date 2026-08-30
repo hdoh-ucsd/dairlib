@@ -35,6 +35,11 @@ OimTParams LoadAndValidateConfig(const std::string& path) {
   if (params.controller.task_space_plan_step_limit <= 0.0) {
     throw std::runtime_error("task_space_plan_step_limit must be positive");
   }
+  if (params.controller.pusher_radius <= 0.0 ||
+      params.controller.approach_clearance < 0.0 ||
+      params.controller.contact_activation_tolerance <= 0.0) {
+    throw std::runtime_error("invalid pusher approach/contact parameters");
+  }
   return params;
 }
 
