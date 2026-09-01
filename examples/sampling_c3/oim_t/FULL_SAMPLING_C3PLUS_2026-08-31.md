@@ -1743,3 +1743,28 @@ Gate-66 inconsistency: provisional one-observation evidence remained class 1,
 but its corrected lateral estimate was still used as a hard rejection. Gate 74
 must keep provisional corrections diagnostic-only until compatibility is
 replicated.
+
+## Gate 74 — provisional response is diagnostic-only
+
+Primary and component candidate hard gates now use corrected terminal/lateral
+predictions only for replicated compatible evidence class 0. A one-observation
+class-1 residual remains logged but the original C3+ prediction retains
+authority.
+
+```text
+source commit:                    81067424
+config/settings/tolerances:       unchanged
+focused tests / live build:       PASS / PASS
+physical output:                  /root/push_anything_ADMM/results/xarm6_provisional_response_gate_40000_Mz6MZh
+measured productive cycles:       10
+updates used:                     17268
+measured q1 range:                [-0.000370, 0.898378] rad
+measured q2 range:                [-1.761692, 0.753901] rad
+simulator terminal:               FAIL (0.629585 m / 1.85495 rad)
+```
+
+Gate 74 passes and removes the earlier one-cycle candidate exhaustion. A later
+physical contact approach failed whole-shaft clearance; its fallback then
+reused the old recovery batch. Gate 75 extends Gate 72 measured replanning to
+every verified released execution failure, including lift/anchor/traverse/
+lower/descend/contact acquisition failures.

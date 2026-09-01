@@ -3403,7 +3403,7 @@ int DoMain(int argc, char* argv[]) {
                   if (component_decomposed_candidate &&
                       predicted_terminal_pose.has_value()) {
                     const Eigen::Vector3d& transaction_terminal =
-                        response_conditioning.matching_observations > 0
+                        measured_response_compatible
                             ? response_conditioning
                                   .corrected_terminal_object_pose
                             : *predicted_terminal_pose;
@@ -3465,7 +3465,7 @@ int DoMain(int argc, char* argv[]) {
                       predicted_lateral <=
                       params.controller.lateral_drift_tolerance;
                   const bool corrected_lateral_safe =
-                      response_conditioning.matching_observations == 0 ||
+                      !measured_response_compatible ||
                       response_conditioning.corrected_lateral_error <=
                           params.controller.lateral_drift_tolerance;
                   std::cout <<
