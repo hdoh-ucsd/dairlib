@@ -1542,3 +1542,28 @@ gap. Bounded corridor restoration may spend component debt, but Gate 55
 already requires its total terminal normalized transaction to remain positive.
 Gate 65 must apply that receipt before live IK and physical contact, not only
 after recovery has already spent thousands of updates.
+
+## Gate 65 — positive recovery component transaction
+
+Lateral-recovery candidate admission and ranking now require both corridor
+restoration and Gate 55's positive bounded component transaction. Ranking uses
+terminal normalized magnitude, so lateral correction cannot hide a net
+translation/yaw regression. Physical credit and terminal acceptance are
+unchanged.
+
+```text
+source commit:                    98e1b284
+config/settings/tolerances:       unchanged
+focused tests / live build:       PASS / PASS
+physical output:                  /root/push_anything_ADMM/results/xarm6_positive_recovery_transaction_40000_owPwA1
+recovery-filter activation:       pending (primary search stopped first)
+measured productive cycles:       1
+primary candidates / executable:  400 / 115
+simulator terminal:               FAIL (0.781443 m / 3.03857 rad)
+```
+
+Gate 65 is implemented and test-covered, but this run did not reach its late
+recovery branch. One failed measured response classified every geometrically
+equivalent candidate as incompatible; the primary resample exhausted despite
+115 live-IK-executable candidates. Gate 66 must require replicated response
+evidence before either preference or quarantine changes an evidence class.

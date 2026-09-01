@@ -588,3 +588,8 @@ The best-so-far reference is scoped to named neutral-anchor traversals, where
 periodic winding was physically observed. Other monitored reposition phases
 retain phase-entry conformance because their stable closed-loop approach is
 not necessarily monotone at 20 ms resolution.
+
+Recovery candidate admission composes two independent receipts: measured
+corridor restoration and positive tolerance-normalized terminal component
+transaction. Lateral error reduction cannot numerically compensate for a net
+regression in the actual translation-and-yaw terminal objective.

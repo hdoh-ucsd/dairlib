@@ -4666,13 +4666,24 @@ int DoMain(int argc, char* argv[]) {
                                   ? conditioning
                                         .corrected_terminal_object_pose
                                   : entry.object_pose;
-                          return EvaluateXarmFullSamplingC3LateralRecovery(
+                          const auto recovery =
+                              EvaluateXarmFullSamplingC3LateralRecovery(
                               progress_start_pose, progress_end_pose,
                               ranked_terminal, params.object.goal_pose,
                               params.task.translation_tolerance,
                               params.task.orientation_tolerance,
-                              params.controller.lateral_drift_tolerance)
-                              .accepted;
+                              params.controller.lateral_drift_tolerance);
+                          const auto transaction =
+                              EvaluateXarmFullSamplingC3ComponentTransaction(
+                                  progress_start_pose, ranked_terminal,
+                                  params.object.goal_pose,
+                                  params.task.translation_tolerance,
+                                  params.task.orientation_tolerance,
+                                  params.controller
+                                      .successor_minimum_translation_progress,
+                                  params.controller
+                                      .successor_minimum_yaw_progress);
+                          return recovery.accepted && transaction.accepted;
                         };
                     auto cycle_task_descent_magnitude =
                         [&](const auto& candidate) {
@@ -4684,20 +4695,32 @@ int DoMain(int argc, char* argv[]) {
                           if (!entry.accepted) {
                             return -std::numeric_limits<double>::infinity();
                           }
-                          const auto descent =
+                          const Eigen::Vector3d& ranked_terminal =
+                              condition_cycle_candidate(candidate)
+                                          .ranking_class == 0
+                                  ? condition_cycle_candidate(candidate)
+                                        .corrected_terminal_object_pose
+                                  : entry.object_pose;
+                          const auto recovery =
                               EvaluateXarmFullSamplingC3LateralRecovery(
                                   progress_start_pose, progress_end_pose,
-                                  condition_cycle_candidate(candidate)
-                                              .ranking_class == 0
-                                      ? condition_cycle_candidate(candidate)
-                                            .corrected_terminal_object_pose
-                                      : entry.object_pose,
+                                  ranked_terminal,
                                   params.object.goal_pose,
                                   params.task.translation_tolerance,
                                   params.task.orientation_tolerance,
                                   params.controller.lateral_drift_tolerance);
-                          return descent.accepted
-                              ? descent.normalized_magnitude
+                          const auto transaction =
+                              EvaluateXarmFullSamplingC3ComponentTransaction(
+                                  progress_start_pose, ranked_terminal,
+                                  params.object.goal_pose,
+                                  params.task.translation_tolerance,
+                                  params.task.orientation_tolerance,
+                                  params.controller
+                                      .successor_minimum_translation_progress,
+                                  params.controller
+                                      .successor_minimum_yaw_progress);
+                          return recovery.accepted && transaction.accepted
+                              ? transaction.normalized_magnitude
                               : -std::numeric_limits<double>::infinity();
                         };
                     auto select_live_cycle_candidate =
@@ -4727,6 +4750,8 @@ int DoMain(int argc, char* argv[]) {
                                           .lateral_drift_tolerance);
                               XarmFullSamplingC3LateralRecoveryReceipt
                                   recovery_receipt;
+                              XarmFullSamplingC3ComponentTransactionReceipt
+                                  component_transaction;
                               if (entry.accepted) {
                                 recovery_receipt =
                                     EvaluateXarmFullSamplingC3LateralRecovery(
@@ -4738,6 +4763,17 @@ int DoMain(int argc, char* argv[]) {
                                         params.task.orientation_tolerance,
                                         params.controller
                                             .lateral_drift_tolerance);
+                                component_transaction =
+                                    EvaluateXarmFullSamplingC3ComponentTransaction(
+                                        progress_start_pose,
+                                        entry.object_pose,
+                                        params.object.goal_pose,
+                                        params.task.translation_tolerance,
+                                        params.task.orientation_tolerance,
+                                        params.controller
+                                            .successor_minimum_translation_progress,
+                                        params.controller
+                                            .successor_minimum_yaw_progress);
                               }
                               std::cout <<
                                   "full_sampling_c3plus_cycle_recovery_"
@@ -4757,6 +4793,11 @@ int DoMain(int argc, char* argv[]) {
                                                .translation_debt_bounded
                                         << " orientation_debt_rad="
                                         << recovery_receipt.orientation_debt
+                                        << " component_transaction="
+                                        << component_transaction.accepted
+                                        << " component_normalized_magnitude="
+                                        << component_transaction
+                                               .normalized_magnitude
                                         << std::endl;
                               continue;
                             }
