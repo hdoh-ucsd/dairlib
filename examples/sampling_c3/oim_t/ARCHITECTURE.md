@@ -474,3 +474,8 @@ Corrective C3+ objectives are receding-horizon reachable: lateral x remains at
 its global target, while y and yaw subgoals are bounded by their unchanged
 terminal tolerances. Global prediction and measured acceptance remain separate
 and continue to use the final open-table pose.
+
+Recovery response neighborhoods use the physical pusher diameter for contact
+position locality. The terminal translation tolerance no longer causes one
+observation to cover an entire T face; yaw-equivariant transfer otherwise
+retains the same corrected global acceptance rules.

@@ -4457,7 +4457,7 @@ int DoMain(int argc, char* argv[]) {
                                   candidate.sample_normal_O,
                                   params.object.goal_pose,
                                   recovery_response_history,
-                                  params.task.translation_tolerance,
+                                  2.0 * params.controller.pusher_radius,
                                   params.task.orientation_tolerance,
                                   params.controller.lateral_drift_tolerance,
                                   params.controller
@@ -4783,6 +4783,8 @@ int DoMain(int argc, char* argv[]) {
                               << cycle_contact_only_fallback
                               << " seed_replenishment="
                               << cycle_seed_replenishment
+                              << " response_contact_neighborhood_m="
+                              << 2.0 * params.controller.pusher_radius
                               << " rejected_pose="
                               << progress_end_pose.transpose()
                               << " object_angular_velocity_W="

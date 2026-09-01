@@ -1006,3 +1006,27 @@ without retry seeds. Later, two observations covered nearly every stem-left
 proposal because recovery contact matching reused the 50 mm task tolerance,
 which is comparable to the whole face. Gate 44 must localize recovery evidence
 to the existing pusher contact footprint rather than the terminal task scale.
+
+## Gate 44 — contact-footprint-local recovery evidence
+
+Yaw-equivariant recovery matching now uses the configured pusher diameter as
+its object-frame contact-position neighborhood. This replaces the unrelated
+50 mm terminal translation scale without introducing a parameter; normal
+matching and all task/collision acceptance remain unchanged.
+
+```text
+source commit:                    941a3170
+config/settings/tolerances:       unchanged
+physical output:                  /root/push_anything_ADMM/results/xarm6_contact_footprint_response_8000_HGFEw7
+contact neighborhood source:      existing pusher diameter
+later recovery arbitration:       not reached
+fixed-anchor recovery:            FAIL
+reachable in-place anchor:        FAIL
+simulator terminal:               FAIL (0.775161 m / 2.90208 rad)
+```
+
+Gate 44 is implemented and tested but remains physically unexercised. The run
+triggered the Gate-39 fallback instead: after lifting at a joint limit, neither
+the fixed elevated home point nor in-place verticalization had IK. Gate 45 must
+retreat through a whole-capsule-checked elevated joint-space path toward the
+home posture before requesting verticalization.
