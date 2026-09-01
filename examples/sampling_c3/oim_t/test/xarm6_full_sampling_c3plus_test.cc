@@ -801,5 +801,19 @@ TEST(XarmFullSamplingC3PlusTest,
   EXPECT_DOUBLE_EQ(entry.object_pose.x(), 0.379);
 }
 
+TEST(XarmFullSamplingC3PlusTest,
+     TerminalBudgetEstimateIsAnOptimisticMeasuredLowerBound) {
+  const auto estimate = EstimateXarmFullSamplingC3TerminalBudget(
+      Eigen::Vector3d(0.382, 0.334567, -0.146344),
+      Eigen::Vector3d(0.381, -0.4, M_PI), 0.05, 0.10,
+      {{0.0227562, 0.0160722, 1515},
+       {0.0204729, 0.0680510, 1067},
+       {0.00126094, 0.0276520, 937}});
+  EXPECT_TRUE(estimate.finite);
+  EXPECT_EQ(estimate.minimum_measured_cycle_updates, 937);
+  EXPECT_EQ(estimate.optimistic_remaining_cycles, 43);
+  EXPECT_EQ(estimate.optimistic_remaining_updates, 40291);
+}
+
 }  // namespace
 }  // namespace dairlib::oim

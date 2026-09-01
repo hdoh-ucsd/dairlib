@@ -552,4 +552,31 @@ FindXarmFullSamplingC3LateralCorridorEntry(
     const XarmFullSamplingC3CandidateReceipt& candidate,
     double goal_object_x, double lateral_drift_tolerance);
 
+struct XarmFullSamplingC3MeasuredCycleReceipt {
+  double translation_progress{};
+  double orientation_progress{};
+  int updates{};
+};
+
+struct XarmFullSamplingC3TerminalBudgetEstimate {
+  bool finite{};
+  double required_translation_progress{};
+  double required_orientation_progress{};
+  double maximum_measured_translation_progress{};
+  double maximum_measured_orientation_progress{};
+  int minimum_measured_cycle_updates{};
+  int optimistic_remaining_cycles{};
+  int64_t optimistic_remaining_updates{};
+};
+
+// Produces an explicit optimistic lower bound, not a success prediction: it
+// combines the best observed progress in each task component with the cheapest
+// complete productive cycle and the unchanged terminal tolerances.
+XarmFullSamplingC3TerminalBudgetEstimate
+EstimateXarmFullSamplingC3TerminalBudget(
+    const Eigen::Vector3d& current_object_pose,
+    const Eigen::Vector3d& goal_object_pose,
+    double translation_tolerance, double orientation_tolerance,
+    const std::vector<XarmFullSamplingC3MeasuredCycleReceipt>& cycles);
+
 }  // namespace dairlib::oim

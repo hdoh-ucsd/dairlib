@@ -1181,3 +1181,29 @@ task failure. The remaining 0.735 m distance cannot be closed at the measured
 cycle throughput within 8,000 updates. Gate 51 must quantify a lower-bound
 terminal update budget from observed task progress and complete-cycle cost;
 it must not relabel the 8,000-update benchmark as success.
+
+## Gate 51 — measured terminal-budget lower bound
+
+Each productive cycle now records complete update cost plus measured global
+translation and orientation progress. At terminal hold, the controller emits
+an explicitly optimistic lower bound using the best observed progress in each
+component, the cheapest complete cycle, and the unchanged terminal tolerances.
+It does not alter budget admission or success.
+
+```text
+source commit:                    a8a58527
+config/settings/tolerances:       unchanged
+physical output:                  /root/push_anything_ADMM/results/xarm6_terminal_budget_estimate_8000_hCGL2b
+measured productive cycles:       1
+minimum complete cycle cost:      1674 updates
+optimistic remaining cycles:      32
+optimistic remaining updates:     53568
+simulator terminal:               FAIL (0.773723 m / 2.93634 rad)
+```
+
+Gate 51 passes activation and confirms that 8,000 updates cannot be treated as
+a plausible terminal budget at current throughput. The rollout also finally
+activated Gate 46's de-elevation branch. Measurement refresh moved the tip x-y
+after its waypoint was formed, turning a vertical descent into a diagonal
+command that failed position-only IK. Gate 52 must latch x-y from the refreshed
+measurement within the phase while retaining collision checks.

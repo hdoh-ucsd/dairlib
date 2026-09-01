@@ -1838,4 +1838,71 @@ FindXarmFullSamplingC3LateralCorridorEntry(
   return receipt;
 }
 
+XarmFullSamplingC3TerminalBudgetEstimate
+EstimateXarmFullSamplingC3TerminalBudget(
+    const Eigen::Vector3d& current_object_pose,
+    const Eigen::Vector3d& goal_object_pose,
+    double translation_tolerance, double orientation_tolerance,
+    const std::vector<XarmFullSamplingC3MeasuredCycleReceipt>& cycles) {
+  if (!current_object_pose.allFinite() || !goal_object_pose.allFinite() ||
+      !std::isfinite(translation_tolerance) ||
+      !std::isfinite(orientation_tolerance) ||
+      translation_tolerance <= 0.0 || orientation_tolerance <= 0.0) {
+    throw std::invalid_argument("terminal budget inputs are invalid");
+  }
+  auto wrap = [](double angle) {
+    return std::atan2(std::sin(angle), std::cos(angle));
+  };
+  XarmFullSamplingC3TerminalBudgetEstimate estimate;
+  estimate.required_translation_progress = std::max(
+      0.0, (current_object_pose.head<2>() -
+            goal_object_pose.head<2>()).norm() - translation_tolerance);
+  estimate.required_orientation_progress = std::max(
+      0.0, std::abs(wrap(goal_object_pose.z() - current_object_pose.z())) -
+          orientation_tolerance);
+  estimate.minimum_measured_cycle_updates =
+      std::numeric_limits<int>::max();
+  for (const auto& cycle : cycles) {
+    if (!std::isfinite(cycle.translation_progress) ||
+        !std::isfinite(cycle.orientation_progress) || cycle.updates <= 0) {
+      throw std::invalid_argument("measured cycle receipt is invalid");
+    }
+    estimate.maximum_measured_translation_progress = std::max(
+        estimate.maximum_measured_translation_progress,
+        cycle.translation_progress);
+    estimate.maximum_measured_orientation_progress = std::max(
+        estimate.maximum_measured_orientation_progress,
+        cycle.orientation_progress);
+    estimate.minimum_measured_cycle_updates = std::min(
+        estimate.minimum_measured_cycle_updates, cycle.updates);
+  }
+  const bool translation_observed =
+      estimate.required_translation_progress == 0.0 ||
+      estimate.maximum_measured_translation_progress > 0.0;
+  const bool orientation_observed =
+      estimate.required_orientation_progress == 0.0 ||
+      estimate.maximum_measured_orientation_progress > 0.0;
+  if (cycles.empty() || !translation_observed || !orientation_observed) {
+    estimate.minimum_measured_cycle_updates = 0;
+    return estimate;
+  }
+  const int translation_cycles = estimate.required_translation_progress == 0.0
+      ? 0
+      : static_cast<int>(std::ceil(
+            estimate.required_translation_progress /
+            estimate.maximum_measured_translation_progress));
+  const int orientation_cycles = estimate.required_orientation_progress == 0.0
+      ? 0
+      : static_cast<int>(std::ceil(
+            estimate.required_orientation_progress /
+            estimate.maximum_measured_orientation_progress));
+  estimate.optimistic_remaining_cycles =
+      std::max(translation_cycles, orientation_cycles);
+  estimate.optimistic_remaining_updates =
+      static_cast<int64_t>(estimate.optimistic_remaining_cycles) *
+      estimate.minimum_measured_cycle_updates;
+  estimate.finite = true;
+  return estimate;
+}
+
 }  // namespace dairlib::oim

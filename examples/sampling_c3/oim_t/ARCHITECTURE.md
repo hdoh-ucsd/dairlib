@@ -516,3 +516,9 @@ of judging a later horizon overshoot. Selection requires corridor restoration,
 global translation nonregression, and orientation debt no larger than the
 unchanged terminal orientation tolerance. Measured post-recovery Pareto and
 2 mm reserve receipts remain the authority for productive-cycle credit.
+
+Terminal budget reporting is measurement-derived and explicitly optimistic.
+It combines the maximum observed productive progress in each task component
+with the minimum observed complete-cycle update cost to emit a lower bound on
+remaining cycles and updates. It never changes admission, benchmark budget, or
+the global terminal acceptance gate.

@@ -2186,6 +2186,8 @@ int DoMain(int argc, char* argv[]) {
       bool full_task_progress_cycle = false;
       bool any_full_task_progress_cycle = false;
       bool contact_cycle_budget_deferred = false;
+      std::vector<XarmFullSamplingC3MeasuredCycleReceipt>
+          measured_productive_cycles;
       if (measured_lateral_rejected &&
           full_execution_updates < FLAGS_full_execution_steps) {
         const int initial_recovery_start_updates = full_execution_updates;
@@ -2880,6 +2882,8 @@ int DoMain(int argc, char* argv[]) {
                   recovery_response_history;
               while (corrective_lateral_recovery &&
                      full_execution_updates < FLAGS_full_execution_steps) {
+                const int progress_cycle_entry_updates =
+                    full_execution_updates;
                 full_task_progress_cycle = false;
                 if (!wait_for_planar_settle("progress_replan")) {
                   std::cout <<
@@ -5497,6 +5501,11 @@ int DoMain(int argc, char* argv[]) {
                             << std::endl;
                   if (full_task_progress_cycle) {
                     any_full_task_progress_cycle = true;
+                    measured_productive_cycles.push_back({
+                        post_recovery_progress.terminal.translation_progress,
+                        post_recovery_progress.terminal.orientation_progress,
+                        full_execution_updates -
+                            progress_cycle_entry_updates});
                     ++progress_cycle_count;
                     live_execution_rejections.clear();
                     if (!progress_lateral_rejected) {
@@ -5619,6 +5628,32 @@ int DoMain(int argc, char* argv[]) {
       const bool open_table_terminal =
           terminal_translation_error <= params.task.translation_tolerance &&
           terminal_orientation_error <= params.task.orientation_tolerance;
+      const auto terminal_budget_estimate =
+          EstimateXarmFullSamplingC3TerminalBudget(
+              terminal_pose, params.object.goal_pose,
+              params.task.translation_tolerance,
+              params.task.orientation_tolerance,
+              measured_productive_cycles);
+      std::cout << "full_sampling_c3plus_terminal_budget_estimate="
+                << (terminal_budget_estimate.finite ? "PASS" : "UNAVAILABLE")
+                << " measured_cycles=" << measured_productive_cycles.size()
+                << " required_translation_progress_m="
+                << terminal_budget_estimate.required_translation_progress
+                << " required_orientation_progress_rad="
+                << terminal_budget_estimate.required_orientation_progress
+                << " maximum_translation_progress_m="
+                << terminal_budget_estimate
+                       .maximum_measured_translation_progress
+                << " maximum_orientation_progress_rad="
+                << terminal_budget_estimate
+                       .maximum_measured_orientation_progress
+                << " minimum_cycle_updates="
+                << terminal_budget_estimate.minimum_measured_cycle_updates
+                << " optimistic_remaining_cycles="
+                << terminal_budget_estimate.optimistic_remaining_cycles
+                << " optimistic_remaining_updates="
+                << terminal_budget_estimate.optimistic_remaining_updates
+                << std::endl;
       std::cout << "full_sampling_c3plus_open_table_terminal="
                 << (open_table_terminal ? "PASS" : "FAIL")
                 << " object_pose=" << terminal_pose.transpose()
