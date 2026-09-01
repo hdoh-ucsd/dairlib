@@ -312,6 +312,31 @@ EvaluateFullSamplingC3TerminalDescent(
   return receipt;
 }
 
+XarmFullSamplingC3PostRecoveryReceipt
+EvaluateFullSamplingC3PostRecoveryProgress(
+    const Eigen::Vector3d& start_object_pose,
+    const Eigen::Vector3d& post_recovery_object_pose,
+    const Eigen::Vector3d& goal_object_pose,
+    double lateral_drift_tolerance,
+    double minimum_translation_progress,
+    double minimum_orientation_progress) {
+  if (!std::isfinite(lateral_drift_tolerance) ||
+      lateral_drift_tolerance < 0.0) {
+    throw std::invalid_argument(
+        "post-recovery lateral tolerance must be finite and nonnegative");
+  }
+  XarmFullSamplingC3PostRecoveryReceipt receipt;
+  receipt.terminal = EvaluateFullSamplingC3TerminalDescent(
+      start_object_pose, post_recovery_object_pose, goal_object_pose,
+      minimum_translation_progress, minimum_orientation_progress);
+  receipt.lateral_error = std::abs(
+      post_recovery_object_pose.x() - goal_object_pose.x());
+  receipt.lateral_accepted =
+      receipt.lateral_error <= lateral_drift_tolerance;
+  receipt.accepted = receipt.terminal.accepted && receipt.lateral_accepted;
+  return receipt;
+}
+
 XarmFullSamplingC3ResponseConditioningReceipt
 EvaluateFullSamplingC3MeasuredResponseConditioning(
     const Eigen::Vector3d& start_object_pose,

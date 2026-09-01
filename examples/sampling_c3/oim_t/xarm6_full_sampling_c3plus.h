@@ -153,6 +153,24 @@ EvaluateFullSamplingC3TerminalDescent(
     double minimum_translation_progress,
     double minimum_orientation_progress);
 
+struct XarmFullSamplingC3PostRecoveryReceipt {
+  XarmFullSamplingC3TerminalDescentReceipt terminal;
+  bool lateral_accepted{};
+  bool accepted{};
+  double lateral_error{};
+};
+
+// Productivity belongs to the measured state after the complete corrective
+// transaction, not to the transient pose that triggered recovery.
+XarmFullSamplingC3PostRecoveryReceipt
+EvaluateFullSamplingC3PostRecoveryProgress(
+    const Eigen::Vector3d& start_object_pose,
+    const Eigen::Vector3d& post_recovery_object_pose,
+    const Eigen::Vector3d& goal_object_pose,
+    double lateral_drift_tolerance,
+    double minimum_translation_progress,
+    double minimum_orientation_progress);
+
 // A physical contact response is retained in measured coordinates together
 // with the model prediction that selected it.  The contact point and normal
 // identify a local face neighborhood without depending on provider-specific

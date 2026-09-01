@@ -4034,18 +4034,6 @@ int DoMain(int argc, char* argv[]) {
                   }
                   Eigen::Vector3d progress_end_pose =
                       read_full_object_pose();
-                  const double y_progress =
-                      std::abs(progress_start_pose.y() -
-                               params.object.goal_pose.y()) -
-                      std::abs(progress_end_pose.y() -
-                               params.object.goal_pose.y());
-                  const double yaw_progress =
-                      std::abs(WrappedAngleError(
-                          params.object.goal_pose.z(),
-                          progress_start_pose.z())) -
-                      std::abs(WrappedAngleError(
-                          params.object.goal_pose.z(),
-                          progress_end_pose.z()));
                   const auto measured_terminal_descent =
                       EvaluateFullSamplingC3TerminalDescent(
                           progress_start_pose, progress_end_pose,
@@ -4807,6 +4795,48 @@ int DoMain(int argc, char* argv[]) {
                               << " updates=" << full_execution_updates
                               << std::endl;
                   }
+                  const Eigen::Vector3d post_recovery_pose =
+                      read_full_object_pose();
+                  const auto post_recovery_progress =
+                      EvaluateFullSamplingC3PostRecoveryProgress(
+                          progress_start_pose, post_recovery_pose,
+                          params.object.goal_pose,
+                          params.controller.lateral_drift_tolerance,
+                          params.controller
+                              .successor_minimum_translation_progress,
+                          params.controller.successor_minimum_yaw_progress);
+                  const double post_recovery_y_progress =
+                      std::abs(progress_start_pose.y() -
+                               params.object.goal_pose.y()) -
+                      std::abs(post_recovery_pose.y() -
+                               params.object.goal_pose.y());
+                  const double post_recovery_yaw_progress =
+                      std::abs(WrappedAngleError(
+                          params.object.goal_pose.z(),
+                          progress_start_pose.z())) -
+                      std::abs(WrappedAngleError(
+                          params.object.goal_pose.z(),
+                          post_recovery_pose.z()));
+                  std::cout <<
+                      "full_sampling_c3plus_post_recovery_progress="
+                            << (post_recovery_progress.accepted ? "PASS" :
+                                "FAIL")
+                            << " pre_recovery_pose="
+                            << progress_end_pose.transpose()
+                            << " post_recovery_pose="
+                            << post_recovery_pose.transpose()
+                            << " translation_progress_m="
+                            << post_recovery_progress.terminal
+                                   .translation_progress
+                            << " orientation_progress_rad="
+                            << post_recovery_progress.terminal
+                                   .orientation_progress
+                            << " lateral_error_m="
+                            << post_recovery_progress.lateral_error
+                            << " lateral_accepted="
+                            << post_recovery_progress.lateral_accepted
+                            << " updates=" << full_execution_updates
+                            << std::endl;
                   const int measured_release_recovery =
                       full_execution_updates -
                       release_recovery_start_updates;
@@ -4824,31 +4854,36 @@ int DoMain(int argc, char* argv[]) {
                                    measured_release_recovery_updates.begin(),
                                    measured_release_recovery_updates.end())
                             << std::endl;
-                  full_task_progress_cycle = productive_progress &&
+                  full_task_progress_cycle =
+                      post_recovery_progress.accepted &&
                       progress_recovered &&
                       (progress_knots_reached ||
                        progress_lateral_rejected);
                   const bool recovery_only_continuation =
-                      !productive_progress && progress_recovered &&
+                      !post_recovery_progress.accepted &&
+                      progress_recovered &&
                       (progress_lateral_rejected ||
                        terminal_descent_released);
                   std::cout << "full_sampling_c3plus_task_progress_cycle="
                             << (full_task_progress_cycle ? "PASS" : "FAIL")
-                            << " y_progress_m=" << y_progress
-                            << " yaw_progress_rad=" << yaw_progress
+                            << " y_progress_m="
+                            << post_recovery_y_progress
+                            << " yaw_progress_rad="
+                            << post_recovery_yaw_progress
                             << " translation_progress_m="
-                            << measured_terminal_descent
+                            << post_recovery_progress.terminal
                                    .translation_progress
                             << " orientation_progress_rad="
-                            << measured_terminal_descent
+                            << post_recovery_progress.terminal
                                    .orientation_progress
                             << " translation_nonregressive="
-                            << measured_terminal_descent
+                            << post_recovery_progress.terminal
                                    .translation_nonregressive
                             << " orientation_nonregressive="
-                            << measured_terminal_descent
+                            << post_recovery_progress.terminal
                                    .orientation_nonregressive
-                            << " end_pose=" << progress_end_pose.transpose()
+                            << " end_pose="
+                            << post_recovery_pose.transpose()
                             << " updates=" << full_execution_updates
                             << std::endl;
                   if (full_task_progress_cycle) {

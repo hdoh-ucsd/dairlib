@@ -687,3 +687,33 @@ the corrective-face recovery completes. Gate 33 must re-evaluate translation,
 orientation, and lateral acceptance from the measured post-recovery pose and
 must not credit a cycle whose corrective transaction undoes the initial task
 progress.
+
+## Gate 33 — post-recovery net-progress ownership
+
+The productive-cycle receipt is now evaluated from the measured object pose
+after all release and lateral-correction phases complete. The same unchanged
+Pareto rule is applied to that pose, and lateral error must also satisfy the
+existing 5 mm corridor. The immediate contact pose remains in the response
+history because it is the physical response to the selected C3+ candidate, but
+it can no longer clear the candidate quarantine or increment the receding-cycle
+counter by itself.
+
+```text
+source commit:                    19e1a8a1
+worktree:                         dirty; Gate-33 implementation under test
+config SHA-256:                   d11cd65efbcf6ac7c814a0b690cc76f9135d27a9f607f6f10dc7d9b26051b990
+seed/settings/tolerances:         unchanged
+physical output:                  /root/push_anything_ADMM/results/xarm6_post_recovery_receipt_8000_AU6gGW
+seven-phase acquisitions:         4 PASS
+post-recovery progress:           1 PASS / 3 FAIL
+failure classifications:         2 yaw, 1 translation, 1 lateral (overlap)
+honest productive cycles:         1
+simulator terminal:               FAIL (0.779160 m / 2.46560 rad)
+```
+
+Gate 33 passes by rejecting three previously miscredited transactions. The
+new failure is upstream: corrective candidate generation replaces the global
+goal with an x-only lateral target, so its C3+ ranking is free to undo y or yaw
+progress. Gate 34 must retain the global task goal during lateral recovery and
+require predicted translation/orientation nonregression in addition to the
+existing corrective x-force polarity and physical clearance gates.

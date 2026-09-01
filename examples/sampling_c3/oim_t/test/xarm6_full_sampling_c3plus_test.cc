@@ -261,6 +261,29 @@ TEST(XarmFullSamplingC3PlusTest, TerminalDescentRequiresParetoProgress) {
 }
 
 TEST(XarmFullSamplingC3PlusTest,
+     PostRecoveryProgressOwnsTheFinalMeasuredPose) {
+  const Eigen::Vector3d start(0.381, 0.40, 0.0);
+  const Eigen::Vector3d goal(0.381, -0.40, 3.141592653589793);
+  const auto preserved = EvaluateFullSamplingC3PostRecoveryProgress(
+      start, Eigen::Vector3d(0.382, 0.38, 0.10), goal,
+      0.005, 0.001, 0.01);
+  EXPECT_TRUE(preserved.accepted);
+  EXPECT_TRUE(preserved.lateral_accepted);
+
+  const auto undone = EvaluateFullSamplingC3PostRecoveryProgress(
+      start, Eigen::Vector3d(0.382, 0.41, 0.10), goal,
+      0.005, 0.001, 0.01);
+  EXPECT_FALSE(undone.accepted);
+  EXPECT_FALSE(undone.terminal.translation_nonregressive);
+
+  const auto lateral_exit = EvaluateFullSamplingC3PostRecoveryProgress(
+      start, Eigen::Vector3d(0.39, 0.38, 0.10), goal,
+      0.005, 0.001, 0.01);
+  EXPECT_FALSE(lateral_exit.accepted);
+  EXPECT_FALSE(lateral_exit.lateral_accepted);
+}
+
+TEST(XarmFullSamplingC3PlusTest,
      MeasuredResponseConditioningPreservesCostClassSemantics) {
   const Eigen::Vector3d goal(0.0, -1.0, 1.0);
   const Eigen::Vector3d start(0.0, 0.0, 0.0);

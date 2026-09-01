@@ -410,3 +410,10 @@ motion remain inside the existing activation ball. The task-space regression
 envelope is anchored at phase entry, so bounded convergent transients do not
 look like a rejected preview while a phase that retreats past its admitted
 start still fails closed.
+
+Cycle productivity is owned by the final measured state of the entire physical
+transaction. The contact-response pose remains valid model-residual evidence,
+but task translation, orientation, and lateral acceptance are recomputed after
+release and corrective recovery. Candidate quarantine and the productive-cycle
+counter consume this post-recovery receipt, preventing an intermediate contact
+response from receiving credit for progress that recovery later removes.
