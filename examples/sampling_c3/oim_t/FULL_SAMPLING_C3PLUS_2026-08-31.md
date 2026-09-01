@@ -1288,3 +1288,30 @@ predicted only 0.7--1.2 mm of temporary translation debt and were rejected by
 the strict intermediate two-component Pareto gate. Candidate admission needs
 a bounded task-component transaction while measured progress credit remains
 strictly Pareto.
+
+## Gate 55 — bounded component-decomposed transaction
+
+Translation-only and rotation-only fallback candidates may now spend at most
+one unchanged terminal tolerance in the inactive task component, only when
+their total tolerance-normalized descent is positive and the active component
+meets an existing successor progress minimum. Wrench polarity, measured
+response conditioning, live IK, capsule clearance, measured productive-cycle
+acceptance, and the global terminal gate remain unchanged.
+
+```text
+source commit:                    e9b04462
+config/settings/tolerances:       unchanged
+focused tests / live build:       PASS / PASS
+physical output:                  /root/push_anything_ADMM/results/xarm6_component_transaction_8000_Vze1cL
+component fallback activations:   0 (activation pending)
+measured productive cycles:       1
+later uncredited task progress:   0.024396 m / 0.159697 rad
+simulator terminal:               FAIL (0.765001 m / 2.85981 rad)
+```
+
+Gate 55 is implemented but activation remains pending. The run progressed to a
+new corrective-recovery failure: its fixed high neutral anchor was
+position-only-IK infeasible after a large measured transition. Gate 56 must
+give corrective recovery the same reachable, candidate-overhead, and
+measurement-conditioned de-elevation fallback ladder as primary recovery,
+without bypassing swept whole-capsule clearance.

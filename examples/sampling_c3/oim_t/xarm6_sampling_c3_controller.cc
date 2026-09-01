@@ -3305,8 +3305,34 @@ int DoMain(int argc, char* argv[]) {
                       response_conditioning.ranking_class == 0;
                   const bool measured_response_incompatible =
                       response_conditioning.ranking_class == 2;
+                  const bool component_decomposed_candidate =
+                      candidate.sample_name.rfind("translation_only_", 0) ==
+                          0 ||
+                      candidate.sample_name.rfind("rotation_only_", 0) == 0;
+                  XarmFullSamplingC3ComponentTransactionReceipt
+                      component_transaction;
+                  if (component_decomposed_candidate &&
+                      predicted_terminal_pose.has_value()) {
+                    const Eigen::Vector3d& transaction_terminal =
+                        response_conditioning.matching_observations > 0
+                            ? response_conditioning
+                                  .corrected_terminal_object_pose
+                            : *predicted_terminal_pose;
+                    component_transaction =
+                        EvaluateXarmFullSamplingC3ComponentTransaction(
+                            progress_start_pose, transaction_terminal,
+                            params.object.goal_pose,
+                            params.task.translation_tolerance,
+                            params.task.orientation_tolerance,
+                            params.controller
+                                .successor_minimum_translation_progress,
+                            params.controller
+                                .successor_minimum_yaw_progress);
+                  }
                   const bool response_conditioned_productive =
-                      measured_response_compatible
+                      component_decomposed_candidate
+                          ? component_transaction.accepted
+                      : measured_response_compatible
                           ? response_conditioning
                                 .corrected_terminal_accepted
                           : predicted_productive;
@@ -3379,6 +3405,16 @@ int DoMain(int argc, char* argv[]) {
                             << " corrected_terminal_accepted="
                             << response_conditioning
                                    .corrected_terminal_accepted
+                            << " component_transaction="
+                            << component_decomposed_candidate
+                            << " component_transaction_accepted="
+                            << component_transaction.accepted
+                            << " component_normalized_magnitude="
+                            << component_transaction.normalized_magnitude
+                            << " component_translation_debt_bounded="
+                            << component_transaction.translation_debt_bounded
+                            << " component_orientation_debt_bounded="
+                            << component_transaction.orientation_debt_bounded
                             << " observed_progress_gain="
                             << response_conditioning.observed_progress_gain
                             << " calibrated_normalized_magnitude="

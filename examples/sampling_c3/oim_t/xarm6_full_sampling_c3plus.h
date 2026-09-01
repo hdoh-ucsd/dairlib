@@ -176,6 +176,26 @@ EvaluateFullSamplingC3NormalizedParetoDescent(
     double translation_tolerance,
     double orientation_tolerance);
 
+struct XarmFullSamplingC3ComponentTransactionReceipt {
+  XarmFullSamplingC3TerminalDescentReceipt terminal;
+  double normalized_magnitude{};
+  bool translation_debt_bounded{};
+  bool orientation_debt_bounded{};
+  bool accepted{};
+};
+
+// Component-decomposed planning may spend at most one unchanged terminal
+// tolerance in the inactive component when total normalized descent is
+// positive and the active component reaches an existing progress minimum.
+// Physical productive-cycle credit remains governed by strict Pareto descent.
+XarmFullSamplingC3ComponentTransactionReceipt
+EvaluateXarmFullSamplingC3ComponentTransaction(
+    const Eigen::Vector3d& start_object_pose,
+    const Eigen::Vector3d& end_object_pose,
+    const Eigen::Vector3d& goal_object_pose,
+    double translation_tolerance, double orientation_tolerance,
+    double minimum_translation_progress, double minimum_orientation_progress);
+
 struct XarmFullSamplingC3PostRecoveryReceipt {
   XarmFullSamplingC3TerminalDescentReceipt terminal;
   bool lateral_accepted{};

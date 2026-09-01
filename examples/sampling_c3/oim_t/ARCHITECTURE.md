@@ -539,3 +539,9 @@ Every productive-cycle receipt also produces a live budget-sufficiency
 diagnostic. It compares remaining requested updates against the optimistic
 measurement-derived lower bound. This is observability only: even a PASS is
 not success, and a FAIL does not modify the benchmark or any control gate.
+
+Component-decomposed planning has matching transaction semantics. Its inactive
+task coordinate may accrue no more than one unchanged terminal tolerance only
+when total normalized descent stays positive and an existing active-component
+progress minimum is met. This is intermediate admission only; measured cycle
+credit remains strict Pareto.

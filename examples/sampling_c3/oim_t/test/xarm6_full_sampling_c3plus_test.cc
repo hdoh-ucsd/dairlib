@@ -298,6 +298,33 @@ TEST(XarmFullSamplingC3PlusTest,
 }
 
 TEST(XarmFullSamplingC3PlusTest,
+     ComponentTransactionBoundsInactiveTaskDebt) {
+  const Eigen::Vector3d start(0.0, 1.0, 1.0);
+  const Eigen::Vector3d goal(0.0, 0.0, 0.0);
+  const auto yaw_with_small_translation_debt =
+      EvaluateXarmFullSamplingC3ComponentTransaction(
+          start, Eigen::Vector3d(0.0, 1.001, 0.995), goal,
+          0.05, 0.10, 0.002, 0.002);
+  EXPECT_FALSE(
+      yaw_with_small_translation_debt.terminal.translation_nonregressive);
+  EXPECT_TRUE(yaw_with_small_translation_debt.translation_debt_bounded);
+  EXPECT_GT(yaw_with_small_translation_debt.normalized_magnitude, 0.0);
+  EXPECT_TRUE(yaw_with_small_translation_debt.accepted);
+
+  const auto net_regressive = EvaluateXarmFullSamplingC3ComponentTransaction(
+      start, Eigen::Vector3d(0.0, 1.01, 0.995), goal,
+      0.05, 0.10, 0.002, 0.002);
+  EXPECT_LT(net_regressive.normalized_magnitude, 0.0);
+  EXPECT_FALSE(net_regressive.accepted);
+
+  const auto excessive_debt = EvaluateXarmFullSamplingC3ComponentTransaction(
+      start, Eigen::Vector3d(0.0, 1.051, 0.8), goal,
+      0.05, 0.10, 0.002, 0.002);
+  EXPECT_FALSE(excessive_debt.translation_debt_bounded);
+  EXPECT_FALSE(excessive_debt.accepted);
+}
+
+TEST(XarmFullSamplingC3PlusTest,
      PostRecoveryProgressOwnsTheFinalMeasuredPose) {
   const Eigen::Vector3d start(0.381, 0.40, 0.0);
   const Eigen::Vector3d goal(0.381, -0.40, 3.141592653589793);

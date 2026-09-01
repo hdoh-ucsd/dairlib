@@ -349,6 +349,40 @@ EvaluateFullSamplingC3NormalizedParetoDescent(
   return receipt;
 }
 
+XarmFullSamplingC3ComponentTransactionReceipt
+EvaluateXarmFullSamplingC3ComponentTransaction(
+    const Eigen::Vector3d& start_object_pose,
+    const Eigen::Vector3d& end_object_pose,
+    const Eigen::Vector3d& goal_object_pose,
+    double translation_tolerance, double orientation_tolerance,
+    double minimum_translation_progress,
+    double minimum_orientation_progress) {
+  if (!std::isfinite(minimum_translation_progress) ||
+      !std::isfinite(minimum_orientation_progress) ||
+      minimum_translation_progress < 0.0 ||
+      minimum_orientation_progress < 0.0) {
+    throw std::invalid_argument(
+        "component transaction progress inputs are invalid");
+  }
+  const auto normalized = EvaluateFullSamplingC3NormalizedParetoDescent(
+      start_object_pose, end_object_pose, goal_object_pose,
+      translation_tolerance, orientation_tolerance);
+  XarmFullSamplingC3ComponentTransactionReceipt receipt;
+  receipt.terminal = normalized.terminal;
+  receipt.normalized_magnitude = normalized.normalized_magnitude;
+  receipt.translation_debt_bounded =
+      -receipt.terminal.translation_progress <= translation_tolerance;
+  receipt.orientation_debt_bounded =
+      -receipt.terminal.orientation_progress <= orientation_tolerance;
+  const bool minimum_active_progress =
+      receipt.terminal.translation_progress >= minimum_translation_progress ||
+      receipt.terminal.orientation_progress >= minimum_orientation_progress;
+  receipt.accepted = receipt.translation_debt_bounded &&
+      receipt.orientation_debt_bounded && minimum_active_progress &&
+      receipt.normalized_magnitude > 0.0;
+  return receipt;
+}
+
 XarmFullSamplingC3PostRecoveryReceipt
 EvaluateFullSamplingC3PostRecoveryProgress(
     const Eigen::Vector3d& start_object_pose,
