@@ -5613,11 +5613,21 @@ int DoMain(int argc, char* argv[]) {
                       progress_recovered &&
                       (progress_knots_reached ||
                        progress_lateral_rejected);
+                  const auto bounded_replanning_transaction =
+                      EvaluateXarmFullSamplingC3ComponentTransaction(
+                          progress_start_pose, post_recovery_pose,
+                          params.object.goal_pose,
+                          params.task.translation_tolerance,
+                          params.task.orientation_tolerance,
+                          params.controller
+                              .successor_minimum_translation_progress,
+                          params.controller.successor_minimum_yaw_progress);
                   const bool recovery_only_continuation =
                       !post_recovery_progress.accepted &&
                       progress_recovered &&
                       (progress_lateral_rejected ||
-                       terminal_descent_released);
+                       terminal_descent_released ||
+                       bounded_replanning_transaction.accepted);
                   std::cout << "full_sampling_c3plus_task_progress_cycle="
                             << (full_task_progress_cycle ? "PASS" : "FAIL")
                             << " y_progress_m="
@@ -5705,6 +5715,17 @@ int DoMain(int argc, char* argv[]) {
                         "full_sampling_c3plus_receding_recovery_"
                         "continuation=PASS cycle="
                               << progress_cycle_count
+                              << " bounded_component_transaction="
+                              << bounded_replanning_transaction.accepted
+                              << " normalized_magnitude="
+                              << bounded_replanning_transaction
+                                     .normalized_magnitude
+                              << " translation_debt_bounded="
+                              << bounded_replanning_transaction
+                                     .translation_debt_bounded
+                              << " orientation_debt_bounded="
+                              << bounded_replanning_transaction
+                                     .orientation_debt_bounded
                               << " object_pose="
                               << read_full_object_pose().transpose()
                               << " updates=" << full_execution_updates

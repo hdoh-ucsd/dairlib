@@ -1414,3 +1414,27 @@ regressing orientation by 0.013573 rad. Strict measured productivity correctly
 failed, but its positive tolerance-normalized net descent and bounded debt made
 the released state safe for another solve. Gate 60 must allow this state to
 continue replanning without granting productive-cycle credit.
+
+## Gate 60 — bounded recovered-state replanning
+
+A laterally recovered transaction that fails strict measured Pareto credit may
+now continue the receding loop only when Gate 55's bounded component
+transaction passes. It receives no productive-cycle count and contributes no
+terminal-budget progress receipt.
+
+```text
+source commit:                    e155f204
+config/settings/tolerances:       unchanged
+focused tests / live build:       PASS / PASS
+physical output:                  /root/push_anything_ADMM/results/xarm6_bounded_replan_continuation_40000_PacwQD
+bounded continuation activations: 0 (activation pending)
+measured productive cycles:       1
+simulator terminal:               FAIL (0.775847 m / 2.96896 rad)
+```
+
+Gate 60 is implemented but its late branch remained dormant because a prior
+neutral-anchor traversal repeated Gate 57's joint winding. The existing
+physical conformance check compares current error only with phase-entry error;
+after initially improving a large error, it can reverse by a large amount and
+still pass. Gate 61 must use best-so-far error with the same unchanged
+activation tolerance.

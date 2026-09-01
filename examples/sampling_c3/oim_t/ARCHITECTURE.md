@@ -566,3 +566,8 @@ Extended-rollout evidence now includes twelve consecutive productive cycles
 plus response-conditioned retries. It distinguishes productive provenance from
 replanning viability: a recovered transaction with bounded component debt may
 be a valid next measured state even though strict Pareto credit must fail.
+
+Bounded recovered-state continuation is separate from progress. A transaction
+may seed the next solve when it restores the corridor and passes bounded
+component debt, but it does not increment productive provenance or inform the
+measured progress-rate estimate.
