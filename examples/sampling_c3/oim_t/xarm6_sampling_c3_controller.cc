@@ -4495,6 +4495,24 @@ int DoMain(int argc, char* argv[]) {
                             }
                             const auto response_conditioning =
                                 condition_cycle_candidate(*candidate);
+                            if (response_conditioning.ranking_class == 2) {
+                              std::cout <<
+                                  "full_sampling_c3plus_cycle_recovery_"
+                                  "response_quarantine=REJECT sample="
+                                        << candidate->sample_name
+                                        << " response_observations="
+                                        << response_conditioning
+                                               .matching_observations
+                                        << " corrected_terminal_accepted="
+                                        << response_conditioning
+                                               .corrected_terminal_accepted
+                                        << " corrected_lateral_accepted="
+                                        << response_conditioning
+                                               .corrected_lateral_accepted
+                                        << " before_live_ik=1"
+                                        << std::endl;
+                              continue;
+                            }
                             const auto live_receipt =
                                 EvaluateMeasuredCandidateAcquisition(
                                     acquisition_plant,

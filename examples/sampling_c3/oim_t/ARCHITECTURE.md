@@ -454,3 +454,8 @@ and lateral gates before its evidence class can improve.
 Preview recovery prefers the fixed elevated home anchor. If it is unreachable,
 the already-clear measured lift endpoint may serve as a reachable anchor only
 after vertical posture IK and the existing whole-capsule clearance both pass.
+
+An equivariantly corrected recovery with incompatible measured evidence is
+quarantined before live IK. Incompatible evidence is no longer an execution
+fallback; only compatible or unseen contact neighborhoods may reach geometric
+feasibility checks.

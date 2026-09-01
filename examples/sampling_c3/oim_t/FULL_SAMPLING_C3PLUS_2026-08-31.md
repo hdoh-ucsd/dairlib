@@ -906,3 +906,25 @@ matched one earlier recovery observation across yaw and was classified rank 2.
 Because rank-2 recovery was still retained as deterministic fall-through, it
 reached live IK. Gate 40 must quarantine incompatible corrected recovery before
 live IK while leaving unseen contacts available.
+
+## Gate 40 — incompatible recovery quarantine
+
+Rank-2 equivariantly corrected recovery candidates are now rejected before
+live IK. Rank-1 unseen contacts remain explorable and rank-0 corrected contacts
+retain priority; no observed-incompatible recovery can remain as physical
+fall-through.
+
+```text
+source commit:                    b0e272dc
+config/settings/tolerances:       unchanged
+physical output:                  /root/push_anything_ADMM/results/xarm6_recovery_quarantine_8000_xcLDEr
+quarantine activations:            0 (history not yet populated)
+unseen recovery live-IK failures:  8 at waypoint 0
+simulator terminal:                FAIL (0.820813 m / 2.54645 rad)
+```
+
+Gate 40 is implemented and regression-tested but its physical rejection branch
+remains pending. The first recovery started from a rejected loaded posture and
+all eight unseen candidates failed swept-capsule admission at waypoint 0.
+Gate 41 must own a measured outward controlled release before constructing any
+recovery preview, then re-evaluate all candidates from the released posture.
