@@ -245,6 +245,36 @@ bool IsFullSamplingC3WaypointExecutionConformant(
       phase_entry_waypoint_error + contact_activation_tolerance;
 }
 
+Eigen::VectorXd CanonicalizeXarmPeriodicIkSolutionNearestMeasured(
+    const Eigen::VectorXd& solution, const Eigen::VectorXd& measured,
+    const Eigen::VectorXd& lower_limits,
+    const Eigen::VectorXd& upper_limits) {
+  if (solution.size() == 0 || solution.size() != measured.size() ||
+      solution.size() != lower_limits.size() ||
+      solution.size() != upper_limits.size() || !solution.allFinite() ||
+      !measured.allFinite() || !lower_limits.allFinite() ||
+      !upper_limits.allFinite() ||
+      (lower_limits.array() > upper_limits.array()).any()) {
+    throw std::invalid_argument(
+        "periodic IK canonicalization inputs are invalid");
+  }
+  const double two_pi = 2.0 * std::acos(-1.0);
+  Eigen::VectorXd canonical = solution;
+  for (int i = 0; i < canonical.size(); ++i) {
+    if (upper_limits[i] - lower_limits[i] < two_pi) continue;
+    const double minimum_turn = std::ceil(
+        (lower_limits[i] - solution[i]) / two_pi);
+    const double maximum_turn = std::floor(
+        (upper_limits[i] - solution[i]) / two_pi);
+    if (minimum_turn > maximum_turn) continue;
+    const double nearest_turn = std::round(
+        (measured[i] - solution[i]) / two_pi);
+    canonical[i] = solution[i] + two_pi * std::clamp(
+        nearest_turn, minimum_turn, maximum_turn);
+  }
+  return canonical;
+}
+
 Eigen::Vector3d BuildMeasuredVerticalTranslationSubtarget(
     const Eigen::Vector3d& measured_tip, double waypoint_z,
     double task_space_step_limit) {

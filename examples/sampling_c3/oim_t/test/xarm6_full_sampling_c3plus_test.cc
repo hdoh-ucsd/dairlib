@@ -205,6 +205,25 @@ TEST(XarmFullSamplingC3PlusTest,
 }
 
 TEST(XarmFullSamplingC3PlusTest,
+     PeriodicIkSolutionUsesEquivalentBranchNearestMeasuredState) {
+  const double pi = std::acos(-1.0);
+  Eigen::VectorXd solution(3), measured(3), lower(3), upper(3);
+  solution << -2.0 * pi, -2.0, 0.5;
+  measured << 0.01, -1.9, 0.4;
+  lower << -2.0 * pi, -2.0, -1.0;
+  upper << 2.0 * pi, 2.0, 1.0;
+  const Eigen::VectorXd canonical =
+      CanonicalizeXarmPeriodicIkSolutionNearestMeasured(
+          solution, measured, lower, upper);
+  EXPECT_NEAR(canonical[0], 0.0, 1.0e-12);
+  EXPECT_DOUBLE_EQ(canonical[1], solution[1]);
+  EXPECT_DOUBLE_EQ(canonical[2], solution[2]);
+  EXPECT_THROW(CanonicalizeXarmPeriodicIkSolutionNearestMeasured(
+                   solution, measured.head(2), lower, upper),
+               std::invalid_argument);
+}
+
+TEST(XarmFullSamplingC3PlusTest,
      MeasuredVerticalSubtargetRejectsStaleLateralCoordinates) {
   const Eigen::Vector3d measured_tip(-0.13, 0.12, 0.61);
   const Eigen::Vector3d down = BuildMeasuredVerticalTranslationSubtarget(

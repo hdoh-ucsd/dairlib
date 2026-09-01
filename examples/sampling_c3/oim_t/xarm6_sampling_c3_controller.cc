@@ -394,7 +394,17 @@ ContactPostureResult SolveVerticalContactPostureStep(
   }
   if (!result.is_success()) return posture;
   posture.ik_solved = true;
-  Eigen::VectorXd joint_step = result.GetSolution(ik.q()) - measured_q;
+  const Eigen::VectorXd canonical_solution =
+      CanonicalizeXarmPeriodicIkSolutionNearestMeasured(
+          result.GetSolution(ik.q()), measured_q,
+          plant.GetPositionLowerLimits(), plant.GetPositionUpperLimits());
+  if ((canonical_solution - result.GetSolution(ik.q())).norm() > 1.0e-12) {
+    std::cout << "full_sampling_c3plus_periodic_ik_branch=PASS mode=vertical"
+              << " raw_q=" << result.GetSolution(ik.q()).transpose()
+              << " canonical_q=" << canonical_solution.transpose()
+              << " measured_q=" << measured_q.transpose() << std::endl;
+  }
+  Eigen::VectorXd joint_step = canonical_solution - measured_q;
   for (int i = 0; i < joint_step.size(); ++i) {
     const double step_limit =
         params.robot.velocity_limits[i] * params.task.planning_time_step;
@@ -828,7 +838,16 @@ CollisionAwarePostureResult SolveCollisionAwarePostureStep(
   CollisionAwarePostureResult posture;
   posture.target = measured_q;
   if (!result.is_success()) return posture;
-  const Eigen::VectorXd q_solution = result.GetSolution(ik.q());
+  const Eigen::VectorXd q_solution =
+      CanonicalizeXarmPeriodicIkSolutionNearestMeasured(
+          result.GetSolution(ik.q()), measured_q,
+          plant.GetPositionLowerLimits(), plant.GetPositionUpperLimits());
+  if ((q_solution - result.GetSolution(ik.q())).norm() > 1.0e-12) {
+    std::cout << "full_sampling_c3plus_periodic_ik_branch=PASS mode=contact"
+              << " raw_q=" << result.GetSolution(ik.q()).transpose()
+              << " canonical_q=" << q_solution.transpose()
+              << " measured_q=" << measured_q.transpose() << std::endl;
+  }
   Eigen::VectorXd joint_step = q_solution - measured_q;
   for (int i = 0; i < joint_step.size(); ++i) {
     const double step_limit =

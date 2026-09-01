@@ -122,6 +122,14 @@ bool IsFullSamplingC3WaypointExecutionConformant(
     double phase_entry_waypoint_error, double measured_waypoint_error,
     double contact_activation_tolerance);
 
+// Revolute IK may return q +/- 2*pi at identical Cartesian posture. For joints
+// whose declared range contains a complete revolution, select the equivalent
+// in-limit representation nearest measured q before forming a bounded step.
+Eigen::VectorXd CanonicalizeXarmPeriodicIkSolutionNearestMeasured(
+    const Eigen::VectorXd& solution, const Eigen::VectorXd& measured,
+    const Eigen::VectorXd& lower_limits,
+    const Eigen::VectorXd& upper_limits);
+
 // Form a measurement-conditioned vertical translation command. The caller's
 // waypoint contributes only its z coordinate; x-y is latched from the latest
 // measured tip so a measurement refresh cannot create an unintended diagonal

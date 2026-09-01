@@ -1365,3 +1365,27 @@ must canonicalize periodic revolute IK solutions to the equivalent angle
 nearest the measured configuration before velocity-bounded stepping, avoiding
 an unnecessary winding to the joint-limit boundary without changing the
 requested Cartesian posture or joint limits.
+
+## Gate 58 — nearest-measured periodic IK representation
+
+For a revolute joint whose declared interval contains a full revolution, a
+nonlinear posture solution is now shifted by an in-limit integer multiple of
+`2*pi` to the representation nearest measured q before the unchanged velocity
+step clamp. This preserves exact forward kinematics and all constraints while
+preventing an unnecessary full-turn trajectory to a limit boundary.
+
+```text
+source commit:                    fd700c7d
+config/settings/tolerances:       unchanged
+focused tests / live build:       PASS / PASS
+physical output:                  /root/push_anything_ADMM/results/xarm6_periodic_ik_branch_8000_SkAQpJ
+explicit substitutions:          0 (activation pending)
+measured q1 range:                [-0.179786, 0.905267] rad
+measured q2 range:                [-0.928897, 0.655898] rad
+measured productive cycles:       4
+simulator terminal:               FAIL (0.729523 m / 2.91010 rad)
+```
+
+Gate 58 passes regression and the Gate-57 saturation did not recur, though a
+raw equivalent-turn substitution was not needed in this trace. Gate 59 repeats
+the separately labeled 40,000-update attempt to identify the next blocker.

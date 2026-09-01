@@ -556,3 +556,8 @@ the 8,000-step benchmark. Gate 57 showed why: it stopped early at a periodic
 joint winding, not at the requested budget. Periodic posture-IK results must be
 represented in the equivalent joint-angle branch nearest measured state before
 the existing velocity-limited interpolation is formed.
+
+Periodic IK representation is canonicalized without changing kinematics. For
+declared full-revolution joints, the in-limit `q + 2*pi*k` nearest measured q
+is selected before the normal bounded step; narrower nonperiodic joints are
+untouched.
