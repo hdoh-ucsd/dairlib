@@ -2230,6 +2230,8 @@ int DoMain(int argc, char* argv[]) {
               measured_vertical_translation
                   ? std::abs(waypoint.z() - current_tip.z())
                   : (waypoint - current_tip).norm();
+          double best_measured_waypoint_error =
+              phase_entry_waypoint_error;
           auto posture_waypoint_reached = [&]() {
             const double waypoint_error =
                 (vertical_release || measured_vertical_translation)
@@ -2472,13 +2474,16 @@ int DoMain(int argc, char* argv[]) {
                     : (waypoint - current_tip).norm();
             if (enforce_preview_conformance &&
                 !IsFullSamplingC3WaypointExecutionConformant(
-                    phase_entry_waypoint_error, measured_waypoint_error,
+                    best_measured_waypoint_error,
+                    measured_waypoint_error,
                     params.controller.contact_activation_tolerance)) {
               std::cout <<
                   "full_sampling_c3plus_physical_preview_conformance=FAIL"
                         << " phase=" << phase
                         << " phase_entry_waypoint_error_m="
                         << phase_entry_waypoint_error
+                        << " best_waypoint_error_m="
+                        << best_measured_waypoint_error
                         << " measured_waypoint_error_m="
                         << measured_waypoint_error
                         << " tolerance_m="
@@ -2487,6 +2492,8 @@ int DoMain(int argc, char* argv[]) {
                         << std::endl;
               return false;
             }
+            best_measured_waypoint_error = std::min(
+                best_measured_waypoint_error, measured_waypoint_error);
             if (stop_on_lateral_corridor &&
                 std::abs(read_full_object_x() -
                          params.object.goal_pose.x()) <=
@@ -5071,7 +5078,7 @@ int DoMain(int argc, char* argv[]) {
                                cycle_anchor, cycle_attempt_pose,
                                cycle_release_sample,
                                "cycle_recovery_neutral_anchor", true,
-                               false));
+                               false, false, false, false, true));
                       bool cycle_reachable_anchor_fallback = false;
                       bool cycle_overhead_anchor_fallback = false;
                       bool cycle_clearance_height_fallback = false;

@@ -571,3 +571,9 @@ Bounded recovered-state continuation is separate from progress. A transaction
 may seed the next solve when it restores the corridor and passes bounded
 component debt, but it does not increment productive provenance or inform the
 measured progress-rate estimate.
+
+Waypoint execution conformance is measured against the best Cartesian error
+observed within a phase, not only its entry error. This exposes cumulative
+tracking reversal before a periodic joint winds to a limit; the physical
+evidence also requires persistence filtering before the receipt can govern
+normal settling motion.

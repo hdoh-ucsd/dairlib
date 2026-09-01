@@ -1438,3 +1438,30 @@ physical conformance check compares current error only with phase-entry error;
 after initially improving a large error, it can reverse by a large amount and
 still pass. Gate 61 must use best-so-far error with the same unchanged
 activation tolerance.
+
+## Gate 61 — best-so-far physical waypoint conformance
+
+Physical waypoint conformance now compares each measured error with the best
+error observed in that phase, using the unchanged 3 mm activation tolerance.
+The recovery neutral anchor is covered by the same check. This catches
+cumulative Cartesian reversal even when the error remains below its much
+larger phase-entry value.
+
+```text
+source commit:                    b613b38a
+config/settings/tolerances:       unchanged
+focused tests / live build:       PASS / PASS
+physical output:                  /root/push_anything_ADMM/results/xarm6_best_so_far_conformance_8000_JazfSl
+conformance rejections:           12
+measured q1 range:                [-0.278375, 0.860012] rad
+measured q2 range:                [-0.864791, 0.647816] rad
+measured productive cycles:       0
+simulator terminal:               FAIL (0.797035 m / 3.12327 rad)
+```
+
+Gate 61 passes its diagnostic objective: the periodic winding does not recur
+and every reversal is explicitly rejected. It also shows that a one-sample
+best-error comparison is too sensitive to the normal 20 ms settling ripple:
+all twelve otherwise executable acquisitions were rejected after only
+3.1--4.0 mm of transient backslide. Gate 62 must require a persistent
+best-so-far violation while preserving the same spatial tolerance.
