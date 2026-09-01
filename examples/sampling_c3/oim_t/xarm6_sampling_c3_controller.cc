@@ -3963,6 +3963,7 @@ int DoMain(int argc, char* argv[]) {
                         progress_plan.sample_name);
                     bool neutral_anchor_reacquired = false;
                     bool reachable_anchor_fallback = false;
+                    bool overhead_anchor_fallback = false;
                     if (progress_fallback_released &&
                         full_execution_updates <
                             FLAGS_full_execution_steps) {
@@ -4003,6 +4004,26 @@ int DoMain(int argc, char* argv[]) {
                         neutral_anchor_reacquired =
                             reachable_anchor_fallback;
                       }
+                      if (recovery_lifted &&
+                          !neutral_anchor_reacquired) {
+                        // At an outer joint limit, in-place
+                        // verticalization can be infeasible even though the
+                        // selected contact's forward overhead posture was
+                        // live-IK feasible. Reuse that measured-height
+                        // overhead point; the home-seeded posture solver
+                        // validates the complete joint/capsule interpolation.
+                        Eigen::Vector3d overhead_anchor = progress_high;
+                        overhead_anchor.z() = recovery_lift.z();
+                        overhead_anchor_fallback =
+                            execute_posture_waypoint(
+                                overhead_anchor,
+                                read_full_object_pose(), progress_sample,
+                                "progress_preview_recovery_overhead_"
+                                "verticalize_anchor",
+                                false, false, false, false, false, false);
+                        neutral_anchor_reacquired =
+                            overhead_anchor_fallback;
+                      }
                     }
                     const bool terminal_receipt_preserved =
                         measured_response_history.size() ==
@@ -4037,6 +4058,8 @@ int DoMain(int argc, char* argv[]) {
                               << conformance.neutral_anchor_reacquired
                               << " reachable_anchor_fallback="
                               << reachable_anchor_fallback
+                              << " overhead_anchor_fallback="
+                              << overhead_anchor_fallback
                               << " terminal_receipt_preserved="
                               << conformance.terminal_receipt_preserved
                               << " replanning_allowed="

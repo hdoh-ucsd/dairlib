@@ -1030,3 +1030,27 @@ triggered the Gate-39 fallback instead: after lifting at a joint limit, neither
 the fixed elevated home point nor in-place verticalization had IK. Gate 45 must
 retreat through a whole-capsule-checked elevated joint-space path toward the
 home posture before requesting verticalization.
+
+## Gate 45 — candidate-overhead recovery anchor
+
+After fixed-home and measured-lift anchors fail, preview recovery now attempts
+the rejected candidate's already validated overhead x-y point. It retains the
+measured lift height, uses home-seeded vertical-posture IK, and checks every
+interpolated capsule sample before a retry can be authorized.
+
+```text
+source commit:                    364ecfc5
+config/settings/tolerances:       unchanged
+physical output:                  /root/push_anything_ADMM/results/xarm6_overhead_anchor_recovery_8000_jFp0Rr
+fixed anchor contact IK:          FAIL
+measured-lift anchor contact IK:  FAIL
+candidate-overhead contact IK:    FAIL
+common attempt height:            0.57081 m
+simulator terminal:               FAIL (0.774098 m / 2.94377 rad)
+```
+
+Gate 45 is implemented and physically exercised but not accepted. The three
+geometrically distinct anchors all fail at the same elevated height while the
+second arm joint is at its limit. Gate 46 must perform a collision-checked
+position-only descent to the existing geometric capsule-clearance height, then
+retry verticalization. This changes recovery sequencing, not configuration.

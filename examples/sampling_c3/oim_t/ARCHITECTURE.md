@@ -479,3 +479,9 @@ Recovery response neighborhoods use the physical pusher diameter for contact
 position locality. The terminal translation tolerance no longer causes one
 observation to cover an entire T face; yaw-equivariant transfer otherwise
 retains the same corrected global acceptance rules.
+
+Preview recovery has a third anchor after fixed-home and in-place posture IK
+fail: the selected candidate's collision-validated overhead x-y point at the
+measured lift height. It does not bypass IK or swept whole-capsule checks. A
+failed anchor leaves the candidate invalidated and preserves the terminal
+receipt.
