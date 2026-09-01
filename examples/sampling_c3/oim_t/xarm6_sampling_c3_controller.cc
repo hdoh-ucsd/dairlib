@@ -1847,9 +1847,58 @@ int DoMain(int argc, char* argv[]) {
                   acquisition_context.get(),
                   Eigen::VectorXd::Constant(1, robot_message.position[i]));
         }
+        for (int i = 0; i < robot_message.num_velocities; ++i) {
+          std::string joint_name = robot_message.velocity_names[i];
+          constexpr char kVelocitySuffix[] = "dot";
+          if (joint_name.size() >= 3 &&
+              joint_name.compare(joint_name.size() - 3, 3,
+                                 kVelocitySuffix) == 0) {
+            joint_name.erase(joint_name.size() - 3);
+          }
+          acquisition_plant.GetJointByName(joint_name)
+              .SetVelocities(
+                  acquisition_context.get(),
+                  Eigen::VectorXd::Constant(1, robot_message.velocity[i]));
+        }
         return acquisition_plant.EvalBodyPoseInWorld(
                    *acquisition_context, acquisition_ee) *
             params.robot.end_effector_point;
+      };
+      auto read_full_tip_speed = [&]() {
+        Eigen::MatrixXd J(3, acquisition_plant.num_velocities());
+        acquisition_plant.CalcJacobianTranslationalVelocity(
+            *acquisition_context,
+            drake::multibody::JacobianWrtVariable::kV,
+            acquisition_ee.body_frame(), params.robot.end_effector_point,
+            acquisition_plant.world_frame(),
+            acquisition_plant.world_frame(), &J);
+        return (J * acquisition_plant.GetVelocities(
+                        *acquisition_context)).norm();
+      };
+      auto refresh_full_measurements = [&](const std::string& phase) {
+        const int prior_robot_count = full_state_subscriber.count();
+        const int64_t prior_utime =
+            full_state_subscriber.message().utime;
+        int polls = 0;
+        while (full_state_subscriber.count() <= prior_robot_count &&
+               polls < 10) {
+          full_lcm.HandleSubscriptions(100);
+          ++polls;
+        }
+        while (full_lcm.HandleSubscriptions(0) > 0) {
+        }
+        const int64_t latest_utime =
+            full_state_subscriber.message().utime;
+        std::cout << "full_sampling_c3plus_measurement_refresh="
+                  << (latest_utime > prior_utime ? "PASS" : "STALE")
+                  << " phase=" << phase
+                  << " prior_utime=" << prior_utime
+                  << " latest_utime=" << latest_utime
+                  << " elapsed_updates="
+                  << (latest_utime - prior_utime) /
+                         (1000LL * FLAGS_full_execution_period_ms)
+                  << " polls=" << polls << std::endl;
+        return latest_utime > prior_utime;
       };
       auto read_full_object_x = [&]() {
         const auto& object_message = full_object_subscriber.message();
@@ -2124,14 +2173,19 @@ int DoMain(int argc, char* argv[]) {
                                             bool vertical_release = false,
                                             bool enforce_preview_conformance =
                                                 false) {
+          refresh_full_measurements(phase);
           Eigen::Vector3d current_tip = read_full_tip();
-          double best_waypoint_error = (waypoint - current_tip).norm();
+          const double phase_entry_waypoint_error =
+              (waypoint - current_tip).norm();
           auto posture_waypoint_reached = [&]() {
             const double waypoint_error = vertical_release
                 ? std::abs(waypoint.z() - current_tip.z())
                 : (waypoint - current_tip).norm();
-            if (waypoint_error >
-                params.controller.contact_activation_tolerance) {
+            const bool settled = IsFullSamplingC3WaypointSettled(
+                waypoint_error, read_full_tip_speed(),
+                params.task.planning_time_step,
+                params.controller.contact_activation_tolerance);
+            if (!settled) {
               return false;
             }
             if (allow_release_fallback) return true;
@@ -2358,13 +2412,13 @@ int DoMain(int argc, char* argv[]) {
                 (waypoint - current_tip).norm();
             if (enforce_preview_conformance &&
                 !IsFullSamplingC3WaypointExecutionConformant(
-                    best_waypoint_error, measured_waypoint_error,
+                    phase_entry_waypoint_error, measured_waypoint_error,
                     params.controller.contact_activation_tolerance)) {
               std::cout <<
                   "full_sampling_c3plus_physical_preview_conformance=FAIL"
                         << " phase=" << phase
-                        << " best_waypoint_error_m="
-                        << best_waypoint_error
+                        << " phase_entry_waypoint_error_m="
+                        << phase_entry_waypoint_error
                         << " measured_waypoint_error_m="
                         << measured_waypoint_error
                         << " tolerance_m="
@@ -2373,8 +2427,6 @@ int DoMain(int argc, char* argv[]) {
                         << std::endl;
               return false;
             }
-            best_waypoint_error = std::min(
-                best_waypoint_error, measured_waypoint_error);
             if (stop_on_lateral_corridor &&
                 std::abs(read_full_object_x() -
                          params.object.goal_pose.x()) <=
@@ -2397,7 +2449,12 @@ int DoMain(int argc, char* argv[]) {
           std::cout << "full_sampling_c3plus_corrective_phase="
                     << (reached ? "PASS" : "FAIL") << " phase=" << phase
                     << " updates=" << full_execution_updates
-                    << " tip_W=" << current_tip.transpose() << std::endl;
+                    << " tip_W=" << current_tip.transpose()
+                    << " tip_speed_mps=" << read_full_tip_speed()
+                    << " settle_drift_m="
+                    << read_full_tip_speed() *
+                           params.task.planning_time_step
+                    << std::endl;
           return reached;
         };
 

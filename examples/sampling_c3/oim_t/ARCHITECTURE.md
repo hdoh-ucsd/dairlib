@@ -401,3 +401,12 @@ elevated home-tip anchor with a vertical capsule and the preceding cycle's
 terminal evidence remains present. This separates safe retry permission from
 task success: a recovered divergence is a passing conformance receipt, not a
 productive manipulation cycle.
+
+Physical phase handoff consumes a fresh robot measurement rather than the
+subscriber sample that preceded a potentially long Sampling-C3+ solve. Joint
+velocity channels are imported into the same measured acquisition context, and
+arrival additionally requires that one planning interval of measured tip
+motion remain inside the existing activation ball. The task-space regression
+envelope is anchored at phase entry, so bounded convergent transients do not
+look like a rejected preview while a phase that retreats past its admitted
+start still fails closed.

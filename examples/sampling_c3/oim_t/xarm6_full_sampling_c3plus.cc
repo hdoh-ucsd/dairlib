@@ -230,9 +230,10 @@ EvaluateFullSamplingC3AcquisitionConformance(
 }
 
 bool IsFullSamplingC3WaypointExecutionConformant(
-    double best_waypoint_error, double measured_waypoint_error,
+    double phase_entry_waypoint_error, double measured_waypoint_error,
     double contact_activation_tolerance) {
-  if (!std::isfinite(best_waypoint_error) || best_waypoint_error < 0.0 ||
+  if (!std::isfinite(phase_entry_waypoint_error) ||
+      phase_entry_waypoint_error < 0.0 ||
       !std::isfinite(measured_waypoint_error) ||
       measured_waypoint_error < 0.0 ||
       !std::isfinite(contact_activation_tolerance) ||
@@ -241,7 +242,23 @@ bool IsFullSamplingC3WaypointExecutionConformant(
         "full Sampling-C3+ waypoint conformance inputs are invalid");
   }
   return measured_waypoint_error <=
-      best_waypoint_error + contact_activation_tolerance;
+      phase_entry_waypoint_error + contact_activation_tolerance;
+}
+
+bool IsFullSamplingC3WaypointSettled(
+    double waypoint_error, double measured_tip_speed,
+    double planning_time_step, double contact_activation_tolerance) {
+  if (!std::isfinite(waypoint_error) || waypoint_error < 0.0 ||
+      !std::isfinite(measured_tip_speed) || measured_tip_speed < 0.0 ||
+      !std::isfinite(planning_time_step) || planning_time_step <= 0.0 ||
+      !std::isfinite(contact_activation_tolerance) ||
+      contact_activation_tolerance < 0.0) {
+    throw std::invalid_argument(
+        "full Sampling-C3+ waypoint settle inputs are invalid");
+  }
+  return waypoint_error <= contact_activation_tolerance &&
+      measured_tip_speed * planning_time_step <=
+          contact_activation_tolerance;
 }
 
 bool IsFullSamplingC3WrongPolarityResponse(

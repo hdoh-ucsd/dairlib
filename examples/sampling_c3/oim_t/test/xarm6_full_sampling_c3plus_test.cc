@@ -197,8 +197,23 @@ TEST(XarmFullSamplingC3PlusTest,
       0.05, 0.053, 0.003));
   EXPECT_FALSE(IsFullSamplingC3WaypointExecutionConformant(
       0.05, 0.053001, 0.003));
+  EXPECT_TRUE(IsFullSamplingC3WaypointExecutionConformant(
+      0.10, 0.03, 0.003));
   EXPECT_THROW(IsFullSamplingC3WaypointExecutionConformant(
                    -1.0, 0.0, 0.003),
+               std::invalid_argument);
+}
+
+TEST(XarmFullSamplingC3PlusTest,
+     WaypointSettlePredictsOnePlanningStepOfMeasuredDrift) {
+  EXPECT_TRUE(IsFullSamplingC3WaypointSettled(
+      0.003, 0.06, 0.05, 0.003));
+  EXPECT_FALSE(IsFullSamplingC3WaypointSettled(
+      0.003001, 0.0, 0.05, 0.003));
+  EXPECT_FALSE(IsFullSamplingC3WaypointSettled(
+      0.0, 0.060001, 0.05, 0.003));
+  EXPECT_THROW(IsFullSamplingC3WaypointSettled(
+                   0.0, 0.0, 0.0, 0.003),
                std::invalid_argument);
 }
 

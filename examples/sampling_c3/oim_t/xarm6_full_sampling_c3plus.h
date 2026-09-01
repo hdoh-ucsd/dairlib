@@ -119,8 +119,15 @@ EvaluateFullSamplingC3AcquisitionConformance(
 // more than the existing contact-activation tolerance. This detects physical
 // execution leaving a live-IK preview without introducing another threshold.
 bool IsFullSamplingC3WaypointExecutionConformant(
-    double best_waypoint_error, double measured_waypoint_error,
+    double phase_entry_waypoint_error, double measured_waypoint_error,
     double contact_activation_tolerance);
+
+// A physical waypoint is a safe handoff only when it is geometrically reached
+// and its measured tip motion cannot leave the existing activation ball over
+// one unchanged planning interval.
+bool IsFullSamplingC3WaypointSettled(
+    double waypoint_error, double measured_tip_speed,
+    double planning_time_step, double contact_activation_tolerance);
 
 bool IsFullSamplingC3WrongPolarityResponse(
     double start_signed_error, double measured_signed_error,

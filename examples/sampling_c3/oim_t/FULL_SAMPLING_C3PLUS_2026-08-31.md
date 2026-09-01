@@ -652,3 +652,38 @@ a large overshoot despite its 5 mm command bound. Gate 32 must condition phase
 completion on measured end-effector settling derived from the unchanged 3 mm
 activation tolerance and 50 ms planning interval, then demonstrate a physical
 acquisition beyond `progress_lower` without changing OSC gains or task limits.
+
+## Gate 32 — fresh measured-state settled phase handoff
+
+Robot position and velocity channels are now imported together into the
+acquisition plant (`xarm6_jointNdot` maps explicitly to `xarm6_jointN`). A
+phase is complete only when the tip is inside the unchanged 3 mm activation
+ball and its measured velocity predicts no more than 3 mm motion over the
+unchanged 50 ms planning interval. Every physical phase boundary drains a new
+robot measurement before constructing its first command. Conformance uses the
+admitted phase-entry error plus the existing activation tolerance; this catches
+runaway motion while allowing a converging lower phase to have bounded local
+transients.
+
+```text
+source commit:                    5fb19db5
+worktree:                         dirty; Gate-32 implementation under test
+config SHA-256:                   d11cd65efbcf6ac7c814a0b690cc76f9135d27a9f607f6f10dc7d9b26051b990
+seed/settings/tolerances:         unchanged
+physical output:                  /root/push_anything_ADMM/results/xarm6_entry_envelope_handoff_8000_A05xBP
+measurement refresh receipts:     86 PASS
+seven-phase acquisitions:         4 PASS
+physical contact responses:       4
+reported productive cycles:       3
+terminal translation error:       0.765420 m
+terminal orientation error:       2.16789 rad
+simulator terminal:               FAIL
+```
+
+Gate 32 passes by crossing the previous four-phase ceiling and proving repeated
+physical contact. The next receipt boundary is incorrect: productivity is
+computed from the object pose immediately after the rejected contact, before
+the corrective-face recovery completes. Gate 33 must re-evaluate translation,
+orientation, and lateral acceptance from the measured post-recovery pose and
+must not credit a cycle whose corrective transaction undoes the initial task
+progress.
