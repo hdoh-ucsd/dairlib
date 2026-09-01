@@ -2956,6 +2956,7 @@ int DoMain(int argc, char* argv[]) {
                   measured_response_history;
               std::vector<XarmFullSamplingC3MeasuredResponse>
                   recovery_response_history;
+              bool bounded_corridor_handoff_pending = false;
               while (corrective_lateral_recovery &&
                      full_execution_updates < FLAGS_full_execution_steps) {
                 const int progress_cycle_entry_updates =
@@ -2977,19 +2978,28 @@ int DoMain(int argc, char* argv[]) {
                 const bool cycle_entry_has_reserve =
                     cycle_entry_lateral_drift <=
                     progress_lateral_reserve_limit;
+                const bool bounded_handoff_admitted =
+                    bounded_corridor_handoff_pending &&
+                    cycle_entry_lateral_drift <=
+                        params.controller.lateral_drift_tolerance;
                 std::cout << "full_sampling_c3plus_lateral_reserve="
-                          << (cycle_entry_has_reserve ? "PASS" : "FAIL")
+                          << ((cycle_entry_has_reserve ||
+                               bounded_handoff_admitted) ? "PASS" : "FAIL")
                           << " drift_m=" << cycle_entry_lateral_drift
                           << " reserve_limit_m="
                           << progress_lateral_reserve_limit
                           << " outer_tolerance_m="
                           << params.controller.lateral_drift_tolerance
+                          << " bounded_handoff="
+                          << bounded_handoff_admitted
                           << " updates=" << full_execution_updates
                           << std::endl;
-                if (!cycle_entry_has_reserve) {
+                if (!cycle_entry_has_reserve &&
+                    !bounded_handoff_admitted) {
                   corrective_lateral_recovery = false;
                   break;
                 }
+                bounded_corridor_handoff_pending = false;
                 const double cycle_entry_translation_error =
                     (cycle_entry_pose.head<2>() -
                      params.object.goal_pose.head<2>()).norm();
@@ -5954,6 +5964,8 @@ int DoMain(int argc, char* argv[]) {
                     // corridor and cleared contact it is a valid state from
                     // which to re-solve. Do not terminate the receding loop.
                     corrective_lateral_recovery = true;
+                    bounded_corridor_handoff_pending =
+                        bounded_corridor_continuation;
                     if (terminal_descent_released ||
                         rejected_face_released) {
                       active_release_name = progress_plan.sample_name;

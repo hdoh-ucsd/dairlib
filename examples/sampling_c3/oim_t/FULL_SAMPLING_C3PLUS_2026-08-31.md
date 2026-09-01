@@ -1719,3 +1719,27 @@ The bounded continuation ended at 2.32 mm lateral error, then the next outer
 loop rejected it at the unchanged 2 mm reserve check. Gate 73 must carry an
 explicit one-iteration bounded-corridor handoff through that admission check,
 without treating it as productive credit or widening the 5 mm outer limit.
+
+## Gate 73 — one-iteration bounded handoff admission
+
+A Gate-69 bounded continuation now carries an explicit one-iteration token
+through the next lateral-reserve admission. The token is valid only inside the
+unchanged 5 mm corridor, is consumed immediately, and never grants productive
+credit or changes the 2 mm reserve for ordinary cycles.
+
+```text
+source commit:                    ff48b852
+config/settings/tolerances:       unchanged
+focused tests / live build:       PASS / PASS
+physical output:                  /root/push_anything_ADMM/results/xarm6_bounded_handoff_admission_40000_EhQiLB
+bounded handoff activation:       pending
+measured productive cycles:       1
+primary candidates / executable:  400 / 112
+simulator terminal:               FAIL (0.777946 m / 3.08812 rad)
+```
+
+Gate 73 is implemented but activation-pending. The short trace reveals a
+Gate-66 inconsistency: provisional one-observation evidence remained class 1,
+but its corrected lateral estimate was still used as a hard rejection. Gate 74
+must keep provisional corrections diagnostic-only until compatibility is
+replicated.
