@@ -5046,20 +5046,90 @@ int DoMain(int argc, char* argv[]) {
                               cycle_release_sample,
                               "cycle_recovery_lift", true, false, false,
                               false, true);
-                      const bool cycle_anchored = cycle_lifted &&
+                      bool cycle_anchored = cycle_lifted &&
                           (!use_cycle_neutral_anchor ||
                            execute_posture_waypoint(
                                cycle_anchor, cycle_attempt_pose,
                                cycle_release_sample,
                                "cycle_recovery_neutral_anchor", true,
                                false));
-                      const Eigen::Vector3d cycle_verticalization_point =
-                          use_cycle_neutral_anchor ? cycle_anchor : cycle_lift;
-                      const bool cycle_verticalized = cycle_anchored &&
-                          execute_posture_waypoint(
-                              cycle_verticalization_point, cycle_attempt_pose,
-                              cycle_sample,
-                              "cycle_recovery_verticalize", false, false);
+                      bool cycle_reachable_anchor_fallback = false;
+                      bool cycle_overhead_anchor_fallback = false;
+                      bool cycle_clearance_height_fallback = false;
+                      bool cycle_verticalized = false;
+                      if (cycle_anchored) {
+                        const Eigen::Vector3d cycle_verticalization_point =
+                            use_cycle_neutral_anchor ? cycle_anchor :
+                                                       cycle_lift;
+                        cycle_verticalized = execute_posture_waypoint(
+                            cycle_verticalization_point, cycle_attempt_pose,
+                            cycle_sample,
+                            "cycle_recovery_verticalize", false, false);
+                      }
+                      if (cycle_lifted && !cycle_verticalized) {
+                        const Eigen::Vector3d reachable_anchor =
+                            read_full_tip();
+                        cycle_reachable_anchor_fallback =
+                            execute_posture_waypoint(
+                                reachable_anchor, read_full_object_pose(),
+                                cycle_sample,
+                                "cycle_recovery_reachable_verticalize", false,
+                                false);
+                        cycle_verticalized =
+                            cycle_reachable_anchor_fallback;
+                      }
+                      if (cycle_lifted && !cycle_verticalized) {
+                        Eigen::Vector3d overhead_anchor = cycle_overhead;
+                        overhead_anchor.z() = read_full_tip().z();
+                        cycle_overhead_anchor_fallback =
+                            execute_posture_waypoint(
+                                overhead_anchor, read_full_object_pose(),
+                                cycle_sample,
+                                "cycle_recovery_overhead_verticalize", false,
+                                false);
+                        cycle_verticalized =
+                            cycle_overhead_anchor_fallback;
+                      }
+                      if (cycle_lifted && !cycle_verticalized) {
+                        Eigen::Vector3d clearance_anchor = read_full_tip();
+                        clearance_anchor.z() =
+                            CapsuleObjectClearanceHeight(params);
+                        const bool clearance_height_reached =
+                            execute_posture_waypoint(
+                                clearance_anchor, read_full_object_pose(),
+                                cycle_sample,
+                                "cycle_recovery_clearance_descent", true,
+                                false, false, false, false, false, true);
+                        cycle_clearance_height_fallback =
+                            clearance_height_reached &&
+                            execute_posture_waypoint(
+                                read_full_tip(), read_full_object_pose(),
+                                cycle_sample,
+                                "cycle_recovery_clearance_verticalize", false,
+                                false);
+                        cycle_verticalized =
+                            cycle_clearance_height_fallback;
+                      }
+                      cycle_anchored = cycle_anchored ||
+                          cycle_reachable_anchor_fallback ||
+                          cycle_overhead_anchor_fallback ||
+                          cycle_clearance_height_fallback;
+                      std::cout <<
+                          "full_sampling_c3plus_cycle_recovery_anchor="
+                                << (cycle_verticalized ? "PASS" : "FAIL")
+                                << " fixed="
+                                << (cycle_anchored &&
+                                    !cycle_reachable_anchor_fallback &&
+                                    !cycle_overhead_anchor_fallback &&
+                                    !cycle_clearance_height_fallback)
+                                << " reachable="
+                                << cycle_reachable_anchor_fallback
+                                << " overhead="
+                                << cycle_overhead_anchor_fallback
+                                << " clearance_height="
+                                << cycle_clearance_height_fallback
+                                << " updates=" << full_execution_updates
+                                << std::endl;
                       const bool cycle_traversed = cycle_verticalized &&
                           execute_posture_waypoint(
                               use_cycle_neutral_anchor ? cycle_overhead :

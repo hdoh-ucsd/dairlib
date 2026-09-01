@@ -1315,3 +1315,29 @@ position-only-IK infeasible after a large measured transition. Gate 56 must
 give corrective recovery the same reachable, candidate-overhead, and
 measurement-conditioned de-elevation fallback ladder as primary recovery,
 without bypassing swept whole-capsule clearance.
+
+## Gate 56 — corrective-recovery anchor ladder
+
+Corrective recovery now mirrors primary recovery after a fixed neutral-anchor
+failure: measured in-place verticalization, candidate-overhead verticalization,
+then measurement-conditioned clearance-height de-elevation and verticalization.
+Every option retains posture IK, per-interpolation whole-capsule clearance, and
+explicit provenance in the live log.
+
+```text
+source commit:                    253ea3a4
+config/settings/tolerances:       unchanged
+focused tests / live build:       PASS / PASS
+physical output:                  /root/push_anything_ADMM/results/xarm6_corrective_anchor_ladder_8000_H5JNqw
+fixed corrective anchor passes:   4
+alternate anchor activations:     0 (activation pending)
+measured productive cycles:       4
+optimistic total update need:     34468 (6631 used + 27837 remaining)
+simulator terminal:               FAIL (0.714302 m / 2.75140 rad)
+```
+
+Gate 56 passes its fixed-path physical receipt; alternate fallbacks remain
+activation-pending. The controller again reaches only the honest budget defer.
+Gate 57 is therefore a separately labeled 40,000-update terminal attempt,
+chosen above the live optimistic lower bound. The canonical 8,000-step
+benchmark remains unchanged and failed.

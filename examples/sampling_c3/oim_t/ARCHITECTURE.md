@@ -545,3 +545,8 @@ task coordinate may accrue no more than one unchanged terminal tolerance only
 when total normalized descent stays positive and an existing active-component
 progress minimum is met. This is intermediate admission only; measured cycle
 credit remains strict Pareto.
+
+Corrective recovery shares primary recovery's fail-closed anchor ladder:
+fixed neutral, measured in-place, candidate overhead, then measured-vertical
+clearance-height de-elevation. Each path logs its provenance and keeps posture
+IK plus swept whole-capsule/table clearance mandatory.
