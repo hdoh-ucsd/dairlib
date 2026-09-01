@@ -4641,15 +4641,16 @@ int DoMain(int argc, char* argv[]) {
                         BuildXarmFullSamplingC3CandidateBuffer(
                             {cycle_exact, cycle_perimeter, cycle_mesh,
                              cycle_left, cycle_right});
-                    const double cycle_x_direction =
+                    double cycle_x_direction =
                         params.object.goal_pose.x() - progress_end_pose.x();
+                    Eigen::Vector3d cycle_planning_pose = progress_end_pose;
                     const XarmFullSamplingC3CandidateReceipt*
                         cycle_candidate = nullptr;
                     Eigen::Vector3d cycle_live_pose = progress_end_pose;
                     std::set<std::string> cycle_execution_rejections;
                     auto has_cycle_polarity = [&](const auto& candidate) {
                       const Eigen::Vector2d normal_W =
-                          Eigen::Rotation2Dd(progress_end_pose.z()) *
+                          Eigen::Rotation2Dd(cycle_planning_pose.z()) *
                           candidate.sample_normal_O;
                       return cycle_x_direction * (-normal_W.x()) > 0.0 &&
                           std::abs(normal_W.x()) > 0.5;
@@ -4669,7 +4670,7 @@ int DoMain(int argc, char* argv[]) {
                           }
                           return
                               EvaluateFullSamplingC3EquivariantResponseConditioning(
-                                  progress_end_pose, entry.object_pose,
+                                  cycle_planning_pose, entry.object_pose,
                                   candidate.sample_point_O,
                                   candidate.sample_normal_O,
                                   params.object.goal_pose,
@@ -4699,7 +4700,7 @@ int DoMain(int argc, char* argv[]) {
                                   : entry.object_pose;
                           const auto recovery =
                               EvaluateXarmFullSamplingC3LateralRecovery(
-                              progress_start_pose, progress_end_pose,
+                              progress_start_pose, cycle_planning_pose,
                               ranked_terminal, params.object.goal_pose,
                               params.task.translation_tolerance,
                               params.task.orientation_tolerance,
@@ -4734,7 +4735,7 @@ int DoMain(int argc, char* argv[]) {
                                   : entry.object_pose;
                           const auto recovery =
                               EvaluateXarmFullSamplingC3LateralRecovery(
-                                  progress_start_pose, progress_end_pose,
+                                  progress_start_pose, cycle_planning_pose,
                                   ranked_terminal,
                                   params.object.goal_pose,
                                   params.task.translation_tolerance,
@@ -5584,6 +5585,114 @@ int DoMain(int argc, char* argv[]) {
                           cycle_candidate->sample_normal_O,
                           cycle_release_name.c_str(), cycle_face};
                       cycle_live_pose = read_full_object_pose();
+                      if (cycle_response_retry &&
+                          failed_approach_released) {
+                        cycle_planning_pose = cycle_live_pose;
+                        cycle_x_direction = params.object.goal_pose.x() -
+                            cycle_planning_pose.x();
+                        OimTParams refreshed_params = params;
+                        refreshed_params.object.start_pose =
+                            cycle_planning_pose;
+                        const auto refreshed_velocity =
+                            read_full_object_velocity();
+                        const auto refreshed_planar_velocity =
+                            ConditionOpenTableObjectVelocity(
+                                refreshed_velocity.first,
+                                refreshed_velocity.second);
+                        refreshed_params.object.start_angular_velocity_W =
+                            refreshed_planar_velocity.first;
+                        refreshed_params.object.start_linear_velocity_W =
+                            refreshed_planar_velocity.second;
+                        refreshed_params.object.goal_pose =
+                            cycle_planning_pose;
+                        refreshed_params.object.goal_pose.x() =
+                            params.object.goal_pose.x();
+                        refreshed_params.object.goal_pose.y() += std::clamp(
+                            params.object.goal_pose.y() -
+                                cycle_planning_pose.y(),
+                            -params.task.translation_tolerance,
+                            params.task.translation_tolerance);
+                        refreshed_params.object.goal_pose.z() += std::clamp(
+                            WrappedAngleError(
+                                params.object.goal_pose.z(),
+                                cycle_planning_pose.z()),
+                            -params.task.orientation_tolerance,
+                            params.task.orientation_tolerance);
+                        const auto refreshed_exact =
+                            RunXarmFullSamplingC3ExactTBatch(
+                                refreshed_params);
+                        const auto refreshed_perimeter =
+                            RunXarmFullSamplingC3PerimeterBatchParallel(
+                                refreshed_params);
+                        const auto refreshed_mesh =
+                            RunXarmFullSamplingC3MeshBatchParallel(
+                                refreshed_params);
+                        const auto refreshed_left =
+                            RunXarmFullSamplingC3StemLeftRefinementBatchParallel(
+                                refreshed_params);
+                        const auto refreshed_right =
+                            RunXarmFullSamplingC3StemRightRefinementBatchParallel(
+                                refreshed_params);
+                        cycle_replenished_buffer =
+                            BuildXarmFullSamplingC3CandidateBuffer(
+                                {refreshed_exact, refreshed_perimeter,
+                                 refreshed_mesh, refreshed_left,
+                                 refreshed_right});
+                        if (cycle_replenished_buffer->successful.empty()) {
+                          *cycle_replenished_buffer =
+                              BuildXarmFullSamplingC3ContactFeasibleCandidateBuffer(
+                                  *cycle_replenished_buffer);
+                        }
+                        ranked_cycle_candidates.clear();
+                        ranked_cycle_contact_candidates.clear();
+                        for (const auto& refreshed_candidate :
+                             cycle_replenished_buffer->successful) {
+                          ranked_cycle_candidates.push_back(
+                              &refreshed_candidate);
+                          ranked_cycle_contact_candidates.push_back(
+                              &refreshed_candidate);
+                        }
+                        auto refreshed_order = [&](const auto* a,
+                                                   const auto* b) {
+                          const int a_rank =
+                              condition_cycle_candidate(*a).ranking_class;
+                          const int b_rank =
+                              condition_cycle_candidate(*b).ranking_class;
+                          if (a_rank != b_rank) return a_rank < b_rank;
+                          const double a_descent =
+                              cycle_task_descent_magnitude(*a);
+                          const double b_descent =
+                              cycle_task_descent_magnitude(*b);
+                          if (a_descent != b_descent) {
+                            return a_descent > b_descent;
+                          }
+                          return a->solve.dynamic_rollout_cost <
+                              b->solve.dynamic_rollout_cost;
+                        };
+                        std::stable_sort(
+                            ranked_cycle_candidates.begin(),
+                            ranked_cycle_candidates.end(),
+                            refreshed_order);
+                        std::stable_sort(
+                            ranked_cycle_contact_candidates.begin(),
+                            ranked_cycle_contact_candidates.end(),
+                            refreshed_order);
+                        cycle_execution_rejections.clear();
+                        std::cout <<
+                            "full_sampling_c3plus_cycle_recovery_"
+                            "measured_replan=PASS object_pose="
+                                  << cycle_planning_pose.transpose()
+                                  << " candidates="
+                                  << cycle_replenished_buffer
+                                         ->total_candidates
+                                  << " executable="
+                                  << cycle_replenished_buffer
+                                         ->successful.size()
+                                  << " failed_sample="
+                                  << failed_cycle_sample
+                                  << " updates=" << full_execution_updates
+                                  << std::endl;
+                      }
                       cycle_candidate = failed_approach_released
                           ? select_next_cycle_candidate() : nullptr;
                       std::cout <<

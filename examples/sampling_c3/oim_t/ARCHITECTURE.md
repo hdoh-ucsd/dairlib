@@ -619,3 +619,8 @@ face's clearance cannot authorize continuation after a new contact. If its
 outward swept capsule is blocked, release may switch to a measured-vertical
 escape at the geometry-derived object-clearance height, never through the
 object or table.
+
+Response retries are receding-horizon transactions, not a static candidate
+list. After every released response invalidation, all recovery dynamics are
+rebuilt from current measured object pose and planar velocity before geometric
+or learned-response ranking is repeated.

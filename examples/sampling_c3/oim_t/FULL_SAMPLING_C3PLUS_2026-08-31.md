@@ -1693,3 +1693,29 @@ activation-pending. The response retries reveal Gate 72: all five alternatives
 were planned at the original rejected pose while measured x drift grew to
 73 mm. Recovery must be rebuilt from the latest released measurement after
 each physical response invalidation.
+
+## Gate 72 — measured-pose recovery replanning
+
+After any released crossing, wrong-polarity, or contact-loss response, the
+controller now conditions a fresh exact/perimeter/mesh/left/right recovery
+batch on the latest measured pose and planar velocity. It recomputes polarity,
+positive component transaction, response class, live IK, and capsule clearance
+instead of selecting another trajectory linearized at the stale rejected pose.
+
+```text
+source commit:                    72c0ea2f
+config/settings/tolerances:       unchanged
+focused tests / live build:       PASS / PASS
+physical output:                  /root/push_anything_ADMM/results/xarm6_measured_response_replan_40000_oE69Hf
+strict productive cycles:         13
+measured response replans:        0 (activation pending)
+Gate-71 vertical clear:           PASS (0.241184 m tip z)
+bounded continuation activations: 1
+simulator terminal:               FAIL (0.583312 m / 1.77176 rad)
+```
+
+Gate 72 is implemented but activation-pending; Gate 71 now has physical proof.
+The bounded continuation ended at 2.32 mm lateral error, then the next outer
+loop rejected it at the unchanged 2 mm reserve check. Gate 73 must carry an
+explicit one-iteration bounded-corridor handoff through that admission check,
+without treating it as productive credit or widening the 5 mm outer limit.
