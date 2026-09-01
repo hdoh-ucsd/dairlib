@@ -957,3 +957,28 @@ history became available, Gate 40 also rejected both incompatible corrective
 faces before IK. No remaining recovery candidate could restore the final
 5.20 mm lateral error. Gate 42 must replenish compatible or unseen corrective
 faces after quarantine without re-admitting the observed-incompatible face.
+
+## Gate 42 — deterministic recovery seed replenishment
+
+Only after the canonical 72 recovery proposals are exhausted, four additional
+perimeter/mesh seed pairs are solved. Their names record retry provenance, and
+all existing response, Pareto, polarity, central-contact, controlled-escape,
+live-IK, and capsule gates remain mandatory.
+
+```text
+source commit:                    1c499d1a
+config/settings/tolerances:       unchanged
+physical output:                  /root/push_anything_ADMM/results/xarm6_recovery_seed_replenishment_8000_iiRHtt
+retry candidates:                 128
+dynamically executable:           94
+globally accepted:                0
+observed-face quarantines:         2
+simulator terminal:               FAIL (0.778069 m / 3.13836 rad)
+```
+
+Gate 42 passes its activation and provenance requirements but does not restore
+physical availability. Every corrective-face retry predicted task regression.
+The five-knot recovery solve still targets the distant terminal goal directly,
+unlike primary receding planning. Gate 43 must use the same tolerance-bounded
+translation/yaw recovery subgoal while continuing to judge every prediction
+and measurement against the unchanged global goal.

@@ -464,3 +464,8 @@ Recovery preview and physical execution share a controlled vertical-escape
 contract for their first lift. It admits an initially intersecting shaft only
 when height increases, outward motion is nonnegative, and the endpoint clears
 the table constraints; subsequent waypoints require normal swept clearance.
+
+Recovery proposal exhaustion has a deterministic seed-replenishment layer.
+Four additional perimeter/mesh seed pairs are generated only after the
+canonical set fails, and retry provenance is encoded in candidate names. No
+retry bypasses response quarantine or physical feasibility gates.

@@ -4672,6 +4672,93 @@ int DoMain(int argc, char* argv[]) {
                     if (!progress_recovered) {
                       cycle_candidate = select_next_cycle_candidate();
                     }
+                    bool cycle_seed_replenishment = false;
+                    std::optional<XarmFullSamplingC3CandidateBuffer>
+                        cycle_replenished_buffer;
+                    if (cycle_candidate == nullptr &&
+                        !progress_recovered) {
+                      std::vector<XarmFullSamplingC3BatchReceipt>
+                          retry_batches;
+                      retry_batches.reserve(8);
+                      for (int retry = 1; retry <= 4; ++retry) {
+                        OimTParams retry_params = cycle_recovery_params;
+                        retry_params.full_sampling_c3plus.random_seed +=
+                            retry;
+                        retry_params.full_sampling_c3plus.mesh_random_seed +=
+                            retry;
+                        auto perimeter_retry =
+                            RunXarmFullSamplingC3PerimeterBatchParallel(
+                                retry_params);
+                        auto mesh_retry =
+                            RunXarmFullSamplingC3MeshBatchParallel(
+                                retry_params);
+                        const std::string prefix =
+                            "recovery_retry_" + std::to_string(retry) + "_";
+                        for (auto& candidate :
+                             perimeter_retry.candidates) {
+                          candidate.sample_name =
+                              prefix + candidate.sample_name;
+                        }
+                        for (auto& candidate : mesh_retry.candidates) {
+                          candidate.sample_name =
+                              prefix + candidate.sample_name;
+                        }
+                        retry_batches.push_back(
+                            std::move(perimeter_retry));
+                        retry_batches.push_back(std::move(mesh_retry));
+                      }
+                      std::vector<XarmFullSamplingC3BatchReceipt>
+                          retry_batch_copies = retry_batches;
+                      cycle_replenished_buffer =
+                          BuildXarmFullSamplingC3CandidateBuffer(
+                              retry_batch_copies);
+                      if (cycle_replenished_buffer->successful.empty()) {
+                        *cycle_replenished_buffer =
+                            BuildXarmFullSamplingC3ContactFeasibleCandidateBuffer(
+                                *cycle_replenished_buffer);
+                      }
+                      std::vector<const
+                          XarmFullSamplingC3CandidateReceipt*>
+                              ranked_replenished;
+                      for (const auto& candidate :
+                           cycle_replenished_buffer->successful) {
+                        ranked_replenished.push_back(&candidate);
+                      }
+                      std::stable_sort(
+                          ranked_replenished.begin(),
+                          ranked_replenished.end(),
+                          [&](const auto* a, const auto* b) {
+                            const int a_rank =
+                                condition_cycle_candidate(*a).ranking_class;
+                            const int b_rank =
+                                condition_cycle_candidate(*b).ranking_class;
+                            if (a_rank != b_rank) return a_rank < b_rank;
+                            return cycle_task_descent_magnitude(*a) >
+                                cycle_task_descent_magnitude(*b);
+                          });
+                      read_full_tip();
+                      const Eigen::VectorXd replenished_start_q =
+                          acquisition_plant.GetPositions(
+                              *acquisition_context);
+                      cycle_candidate = select_live_cycle_candidate(
+                          ranked_replenished, replenished_start_q,
+                          cycle_release_sample);
+                      cycle_seed_replenishment =
+                          cycle_candidate != nullptr;
+                      std::cout <<
+                          "full_sampling_c3plus_cycle_recovery_seed_"
+                          "replenishment="
+                                << (cycle_seed_replenishment ? "PASS" :
+                                    "FAIL")
+                                << " retries=4 candidates="
+                                << cycle_replenished_buffer->total_candidates
+                                << " executable="
+                                << cycle_replenished_buffer
+                                       ->successful.size()
+                                << " response_quarantine=1"
+                                << " live_ik_gate=1 capsule_gate=1"
+                                << std::endl;
+                    }
                     std::cout <<
                         "full_sampling_c3plus_cycle_recovery_resample="
                               << (cycle_candidate != nullptr ? "PASS" :
@@ -4682,6 +4769,8 @@ int DoMain(int argc, char* argv[]) {
                               << cycle_buffer.successful.size()
                               << " contact_only_fallback="
                               << cycle_contact_only_fallback
+                              << " seed_replenishment="
+                              << cycle_seed_replenishment
                               << " rejected_pose="
                               << progress_end_pose.transpose()
                               << " object_angular_velocity_W="
