@@ -1806,10 +1806,12 @@ EvaluateXarmFullSamplingC3LateralRecovery(
       receipt.lateral_error <= lateral_drift_tolerance &&
       receipt.lateral_reduction > 0.0;
   receipt.translation_nonregressive = receipt.translation_progress >= 0.0;
+  receipt.translation_debt_bounded =
+      -receipt.translation_progress <= translation_tolerance;
   receipt.orientation_debt_bounded =
       receipt.orientation_debt <= orientation_tolerance;
   receipt.accepted = receipt.lateral_restored &&
-      receipt.translation_nonregressive && receipt.orientation_debt_bounded;
+      receipt.translation_debt_bounded && receipt.orientation_debt_bounded;
   receipt.normalized_magnitude =
       receipt.lateral_reduction / lateral_drift_tolerance +
       receipt.translation_progress / translation_tolerance -

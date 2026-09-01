@@ -792,8 +792,24 @@ TEST(XarmFullSamplingC3PlusTest,
       0.05, 0.10, 0.005);
   EXPECT_TRUE(bounded.lateral_restored);
   EXPECT_TRUE(bounded.translation_nonregressive);
+  EXPECT_TRUE(bounded.translation_debt_bounded);
   EXPECT_TRUE(bounded.orientation_debt_bounded);
   EXPECT_TRUE(bounded.accepted);
+
+  const auto bounded_translation_debt =
+      EvaluateXarmFullSamplingC3LateralRecovery(
+          cycle_start, rejected, Eigen::Vector3d(0.384, 0.36, -0.15), goal,
+          0.05, 0.10, 0.005);
+  EXPECT_FALSE(bounded_translation_debt.translation_nonregressive);
+  EXPECT_TRUE(bounded_translation_debt.translation_debt_bounded);
+  EXPECT_TRUE(bounded_translation_debt.accepted);
+
+  const auto excessive_translation_debt =
+      EvaluateXarmFullSamplingC3LateralRecovery(
+          cycle_start, rejected, Eigen::Vector3d(0.384, 0.41, -0.15), goal,
+          0.05, 0.10, 0.005);
+  EXPECT_FALSE(excessive_translation_debt.translation_debt_bounded);
+  EXPECT_FALSE(excessive_translation_debt.accepted);
 
   const auto excessive_debt = EvaluateXarmFullSamplingC3LateralRecovery(
       cycle_start, rejected, Eigen::Vector3d(0.384, 0.34, -0.05), goal,

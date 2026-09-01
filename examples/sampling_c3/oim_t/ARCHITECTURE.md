@@ -528,3 +528,9 @@ z: x-y is relatched from measured tip state on every command substep, so an LCM
 refresh cannot convert a vertical recovery into an unpreviewed diagonal move.
 The existing step limit, position-only IK, and swept whole-capsule checks are
 unchanged.
+
+Lateral recovery candidate admission has an explicit transaction-debt model.
+Restoring x may temporarily spend no more than the unchanged terminal
+translation and orientation tolerances. This does not create task progress:
+the subsequent measured post-recovery receipt remains strictly nonregressive
+in both global task components before productive-cycle provenance is granted.

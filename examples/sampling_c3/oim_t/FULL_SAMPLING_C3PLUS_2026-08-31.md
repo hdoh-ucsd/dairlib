@@ -1234,3 +1234,31 @@ is deterministic: all available lateral-recovery candidates restored the
 unchanged x corridor but predicted 0.00288716 m of complete-cycle translation
 debt. Gate 53 must represent bounded recovery debt explicitly while retaining
 separate measured productive-cycle and global terminal acceptance.
+
+## Gate 53 — bounded translation-debt recovery transaction
+
+Lateral recovery may now spend at most the unchanged 0.05 m terminal
+translation tolerance, symmetric with its existing 0.10 rad orientation-debt
+bound, while restoring the unchanged x corridor. This is candidate admission,
+not progress credit: the independent measured post-recovery gate still
+requires globally nonregressive translation and orientation before a cycle is
+called productive, and terminal success still uses the original tolerances.
+
+```text
+source commit:                    66f060ae
+config/settings/tolerances:       unchanged
+focused tests / live build:       PASS / PASS
+physical output:                  /root/push_anything_ADMM/results/xarm6_bounded_translation_recovery_8000_GFFTqD
+corrective recovery passes:       4
+measured productive cycles:       4
+minimum complete cycle cost:      1058 updates
+terminal budget decision:         DEFER (1631 remain / 2331 required)
+simulator terminal:               FAIL (0.745583 m / 2.78197 rad)
+```
+
+Gate 53 passes physical activation. The formerly empty recovery path now
+produces repeated live-IK, whole-capsule-clear corrective contacts, and every
+credited cycle passed the strict measured nonregression check. The next gate
+must expose whether a requested terminal-run budget is sufficient for the
+measurement-derived optimistic lower bound; the 8,000-step benchmark must
+remain an honest expected failure.

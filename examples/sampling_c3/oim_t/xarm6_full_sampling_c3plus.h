@@ -529,14 +529,16 @@ struct XarmFullSamplingC3LateralRecoveryReceipt {
   double normalized_magnitude{};
   bool lateral_restored{};
   bool translation_nonregressive{};
+  bool translation_debt_bounded{};
   bool orientation_debt_bounded{};
   bool accepted{};
 };
 
-// A recovery transaction may temporarily spend at most the unchanged terminal
-// orientation tolerance only when it predicts restoration of the existing
-// lateral corridor and preserves global translation descent over the complete
-// cycle. Measured post-recovery acceptance remains a separate authority.
+// A recovery transaction may temporarily spend at most the corresponding
+// unchanged terminal translation/orientation tolerance only when it predicts
+// restoration of the existing lateral corridor. Measured post-recovery
+// productive-cycle acceptance remains a separate, strictly nonregressive
+// authority.
 XarmFullSamplingC3LateralRecoveryReceipt
 EvaluateXarmFullSamplingC3LateralRecovery(
     const Eigen::Vector3d& cycle_start_object_pose,

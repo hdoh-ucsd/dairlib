@@ -4664,6 +4664,9 @@ int DoMain(int argc, char* argv[]) {
                                         << " translation_progress_m="
                                         << recovery_receipt
                                                .translation_progress
+                                        << " translation_debt_bounded="
+                                        << recovery_receipt
+                                               .translation_debt_bounded
                                         << " orientation_debt_rad="
                                         << recovery_receipt.orientation_debt
                                         << std::endl;
