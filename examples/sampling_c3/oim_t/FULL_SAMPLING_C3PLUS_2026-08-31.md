@@ -819,3 +819,36 @@ the unchanged Pareto acceptance rule, so execution held at update 3,892.
 Gate 37 must restore live-IK candidate availability after evidence-based face
 demotion by searching the remaining contact faces, while leaving incompatible
 top-face candidates quarantined and all tolerances unchanged.
+
+## Gate 37 — component-decomposed candidate search
+
+When both the canonical combined translation/yaw subgoal and contact-feasible
+replenishment yield no globally acceptable candidate, the controller now
+solves translation-only and rotation-only subgoals from the identical measured
+state. Their candidates remain subject to the original global Pareto test,
+measured-response class, lateral corridor, central-contact, live-IK, and full
+capsule gates. Candidate names record the component source; no cost, horizon,
+seed, tolerance, or physical acceptance rule changes.
+
+```text
+source commit:                    503a3028
+worktree:                         dirty; Gate-37 implementation under test
+config SHA-256:                   d11cd65efbcf6ac7c814a0b690cc76f9135d27a9f607f6f10dc7d9b26051b990
+seed/settings/tolerances:         unchanged
+physical output:                  /root/push_anything_ADMM/results/xarm6_component_search_8000_BzLBfL
+decomposed-search activations:     0 (trigger state not reached)
+recovery observations stored:     4
+post-recovery progress:           3 PASS / 1 FAIL
+honest productive cycles:         3
+terminal translation error:       0.788189 m
+terminal orientation error:       2.36720 rad
+simulator terminal:               FAIL
+```
+
+Gate 37 is implemented and regression-tested, but its physical activation
+receipt remains pending because this rollout retained canonical candidates at
+every arbitration. The denser history did expose the next repeatable boundary:
+a late recovery remained unseen at selection and physically regressed
+translation. Gate 38 must demonstrate that a later local recovery candidate
+actually consumes a prior recovery observation, with incompatible corrected
+descent rejected before live IK.

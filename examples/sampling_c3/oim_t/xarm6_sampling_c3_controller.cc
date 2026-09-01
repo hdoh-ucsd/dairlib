@@ -3569,6 +3569,88 @@ int DoMain(int argc, char* argv[]) {
                     progress_buffer = std::move(replenished);
                   }
                 }
+                bool component_decomposed_fallback = false;
+                if (progress_execution_buffer.successful.empty()) {
+                  OimTParams translation_only_params = progress_params;
+                  translation_only_params.object.goal_pose.z() =
+                      progress_start_pose.z();
+                  OimTParams rotation_only_params = progress_params;
+                  rotation_only_params.object.goal_pose.y() =
+                      progress_start_pose.y();
+                  auto translation_only =
+                      build_progress_buffer(translation_only_params);
+                  auto rotation_only =
+                      build_progress_buffer(rotation_only_params);
+                  auto qualify_component = [](const std::string& component,
+                                              auto* buffer) {
+                    for (auto& candidate : buffer->successful) {
+                      candidate.sample_name = component + "_" +
+                          candidate.sample_name;
+                    }
+                    for (auto& candidate : buffer->unsuccessful) {
+                      candidate.sample_name = component + "_" +
+                          candidate.sample_name;
+                    }
+                  };
+                  qualify_component("translation_only", &translation_only);
+                  qualify_component("rotation_only", &rotation_only);
+                  XarmFullSamplingC3CandidateBuffer component_buffer;
+                  component_buffer.total_candidates =
+                      translation_only.total_candidates +
+                      rotation_only.total_candidates;
+                  component_buffer.successful =
+                      std::move(translation_only.successful);
+                  component_buffer.successful.insert(
+                      component_buffer.successful.end(),
+                      std::make_move_iterator(
+                          rotation_only.successful.begin()),
+                      std::make_move_iterator(
+                          rotation_only.successful.end()));
+                  component_buffer.unsuccessful =
+                      std::move(translation_only.unsuccessful);
+                  component_buffer.unsuccessful.insert(
+                      component_buffer.unsuccessful.end(),
+                      std::make_move_iterator(
+                          rotation_only.unsuccessful.begin()),
+                      std::make_move_iterator(
+                          rotation_only.unsuccessful.end()));
+                  std::stable_sort(
+                      component_buffer.successful.begin(),
+                      component_buffer.successful.end(),
+                      [&](const auto& a, const auto& b) {
+                        return condition_candidate(a).ranking_class <
+                            condition_candidate(b).ranking_class;
+                      });
+                  progress_execution_buffer = {};
+                  progress_execution_buffer.total_candidates =
+                      component_buffer.total_candidates;
+                  progress_execution_buffer.unsuccessful =
+                      component_buffer.unsuccessful;
+                  monitored_progress_candidates.clear();
+                  selected_progress_acquisition.reset();
+                  monitored_progress_lateral =
+                      std::numeric_limits<double>::infinity();
+                  evaluate_progress_candidates(
+                      component_buffer.successful);
+                  try_monitored_lateral_fallback();
+                  component_decomposed_fallback =
+                      !progress_execution_buffer.successful.empty();
+                  std::cout <<
+                      "full_sampling_c3plus_component_decomposed_search="
+                            << (component_decomposed_fallback ? "PASS" :
+                                "FAIL")
+                            << " candidates="
+                            << component_buffer.total_candidates
+                            << " executable="
+                            << component_buffer.successful.size()
+                            << " progress_accepted="
+                            << progress_execution_buffer.successful.size()
+                            << " global_pareto_gate=1"
+                            << " measured_response_gate=1"
+                            << " live_ik_gate=1 capsule_gate=1"
+                            << std::endl;
+                  progress_buffer = std::move(component_buffer);
+                }
                 progress_execution_buffer.accepted =
                     progress_execution_buffer.total_candidates > 0 &&
                     !progress_execution_buffer.successful.empty() &&
@@ -3596,6 +3678,8 @@ int DoMain(int argc, char* argv[]) {
                           << progress_execution_buffer.successful.size()
                           << " monitored_lateral_fallback="
                           << monitored_lateral_fallback
+                          << " component_decomposed_fallback="
+                          << component_decomposed_fallback
                           << " selected_predicted_lateral_m="
                           << (monitored_lateral_fallback
                                   ? monitored_progress_lateral

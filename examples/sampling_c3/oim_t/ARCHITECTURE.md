@@ -437,3 +437,10 @@ pose/contact-neighborhood history. Candidate ordering first applies the
 existing compatible/unseen/incompatible evidence classes and only then applies
 normalized predicted or corrected descent. Unseen contacts remain explorable;
 an observed incompatible neighborhood cannot outrank them.
+
+Candidate availability has a fail-closed component-decomposition fallback.
+Only after the combined subgoal and dynamic-contact replenishment are empty,
+translation-only and rotation-only C3+ batches are generated from the same
+measured state. Decomposition affects proposal generation only: the unchanged
+global Pareto, response, corridor, live-IK, and capsule gates still decide
+whether any proposal may execute.
