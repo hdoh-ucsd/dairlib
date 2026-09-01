@@ -2184,6 +2184,7 @@ int DoMain(int argc, char* argv[]) {
       bool corrective_contact_handoff = false;
       bool corrective_lateral_recovery = false;
       bool full_task_progress_cycle = false;
+      bool any_full_task_progress_cycle = false;
       bool contact_cycle_budget_deferred = false;
       if (measured_lateral_rejected &&
           full_execution_updates < FLAGS_full_execution_steps) {
@@ -5425,6 +5426,7 @@ int DoMain(int argc, char* argv[]) {
                             << " updates=" << full_execution_updates
                             << std::endl;
                   if (full_task_progress_cycle) {
+                    any_full_task_progress_cycle = true;
                     ++progress_cycle_count;
                     live_execution_rejections.clear();
                     if (!progress_lateral_rejected) {
@@ -5477,17 +5479,19 @@ int DoMain(int argc, char* argv[]) {
           }
         }
       }
-      const bool closed_loop_handoff =
-          reached_waypoints == osc_execution_plan.positions_W.cols() ||
-          full_task_progress_cycle;
+      const bool initial_plan_handoff =
+          reached_waypoints == osc_execution_plan.positions_W.cols();
       std::cout << "full_sampling_c3plus_measured_closed_loop="
-                << (closed_loop_handoff ? "PASS" : "FAIL")
+                << ((initial_plan_handoff || any_full_task_progress_cycle)
+                        ? "PASS" : "FAIL")
                 << " reached=" << reached_waypoints
                 << " total=" << osc_execution_plan.positions_W.cols()
                 << " updates=" << full_execution_updates
                 << " subtargets=" << commanded_subtargets
                 << " measured_lateral_rejected="
                 << measured_lateral_rejected
+                << " productive_handoff_preserved="
+                << any_full_task_progress_cycle
                 << " max_initial_error=" << maximum_tracking_error
                 << std::endl;
       const Eigen::Vector3d hold_tip = read_full_tip();
@@ -5554,28 +5558,22 @@ int DoMain(int argc, char* argv[]) {
                 << params.task.translation_tolerance
                 << " orientation_tolerance_rad="
                 << params.task.orientation_tolerance << std::endl;
-      const bool execution_budget_limited =
-          contact_cycle_budget_deferred ||
-          full_execution_updates >= FLAGS_full_execution_steps;
+      const auto terminal_status =
+          EvaluateXarmFullSamplingC3TerminalStatus(
+              reached_waypoints, osc_execution_plan.positions_W.cols(),
+              any_full_task_progress_cycle, contact_cycle_budget_deferred,
+              full_execution_updates, FLAGS_full_execution_steps,
+              open_table_terminal);
       std::cout << "full_sampling_c3plus_acceptance_gate="
-                << (closed_loop_handoff && open_table_terminal ? "PASS" :
-                    "FAIL")
-                << " reason="
-                << (!closed_loop_handoff
-                        ? (execution_budget_limited
-                               ? "execution_budget_exhausted"
-                               : "closed_loop_handoff_failed")
-                        : (!open_table_terminal
-                               ? "terminal_tolerance_failed"
-                               : "accepted"))
+                << (terminal_status.accepted ? "PASS" : "FAIL")
+                << " reason=" << terminal_status.reason
+                << " cycle_budget_deferred="
+                << contact_cycle_budget_deferred
+                << " productive_handoff_preserved="
+                << any_full_task_progress_cycle
                 << " updates=" << full_execution_updates
                 << " budget=" << FLAGS_full_execution_steps << std::endl;
-      if (!closed_loop_handoff) {
-        return execution_budget_limited ? 2 : 3;
-      }
-      if (!open_table_terminal) {
-        return 4;
-      }
+      if (!terminal_status.accepted) return terminal_status.return_code;
     }
     return 0;
   }

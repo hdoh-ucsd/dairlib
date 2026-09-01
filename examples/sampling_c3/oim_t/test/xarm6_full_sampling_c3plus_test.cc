@@ -724,5 +724,27 @@ TEST(XarmFullSamplingC3PlusTest, SelectedPlanPreservesEverySpatialKnot) {
   }
 }
 
+TEST(XarmFullSamplingC3PlusTest,
+     ProductiveHandoffSurvivesLaterMeasuredBudgetDefer) {
+  const auto status = EvaluateXarmFullSamplingC3TerminalStatus(
+      5, 10, true, true, 5862, 8000, false);
+  EXPECT_TRUE(status.closed_loop_handoff);
+  EXPECT_FALSE(status.accepted);
+  EXPECT_EQ(status.return_code, 4);
+  EXPECT_EQ(status.reason,
+            "measured_cycle_budget_deferred_before_terminal");
+}
+
+TEST(XarmFullSamplingC3PlusTest,
+     MeasuredBudgetDeferWithoutProductiveHandoffFailsClosed) {
+  const auto status = EvaluateXarmFullSamplingC3TerminalStatus(
+      5, 10, false, true, 5862, 8000, false);
+  EXPECT_FALSE(status.closed_loop_handoff);
+  EXPECT_FALSE(status.accepted);
+  EXPECT_EQ(status.return_code, 2);
+  EXPECT_EQ(status.reason,
+            "measured_cycle_budget_deferred_without_handoff");
+}
+
 }  // namespace
 }  // namespace dairlib::oim

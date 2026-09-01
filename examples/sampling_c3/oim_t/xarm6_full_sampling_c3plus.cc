@@ -1657,4 +1657,38 @@ XarmFullSamplingC3OscExecutionPlan BuildXarmFullSamplingC3OscExecutionPlan(
   return execution;
 }
 
+XarmFullSamplingC3TerminalStatus EvaluateXarmFullSamplingC3TerminalStatus(
+    int reached_initial_waypoints, int total_initial_waypoints,
+    bool any_productive_cycle, bool cycle_budget_deferred,
+    int execution_updates, int execution_budget,
+    bool terminal_pose_accepted) {
+  XarmFullSamplingC3TerminalStatus status;
+  status.closed_loop_handoff =
+      reached_initial_waypoints == total_initial_waypoints ||
+      any_productive_cycle;
+  status.accepted = status.closed_loop_handoff && terminal_pose_accepted;
+  if (status.accepted) {
+    status.reason = "accepted";
+    return status;
+  }
+  if (!status.closed_loop_handoff) {
+    if (execution_updates >= execution_budget) {
+      status.reason = "execution_budget_exhausted";
+      status.return_code = 2;
+    } else if (cycle_budget_deferred) {
+      status.reason = "measured_cycle_budget_deferred_without_handoff";
+      status.return_code = 2;
+    } else {
+      status.reason = "closed_loop_handoff_failed";
+      status.return_code = 3;
+    }
+    return status;
+  }
+  status.reason = cycle_budget_deferred
+      ? "measured_cycle_budget_deferred_before_terminal"
+      : "terminal_tolerance_failed";
+  status.return_code = 4;
+  return status;
+}
+
 }  // namespace dairlib::oim

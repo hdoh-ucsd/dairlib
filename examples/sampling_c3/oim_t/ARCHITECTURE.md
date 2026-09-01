@@ -491,3 +491,9 @@ de-elevate position-only at the measured clear x-y point to
 `CapsuleObjectClearanceHeight`. The descent and subsequent in-place
 verticalization each retain interpolated whole-capsule checks; this is a
 sequencing fallback, not a new height parameter or collision tolerance.
+
+Terminal status uses cumulative physical provenance. A productive cycle
+remains a valid closed-loop handoff after a later measured-budget defer, but it
+does not imply open-table success. A pure status evaluator independently emits
+handoff, global terminal acceptance, reason, and process return code; a defer
+without any productive cycle remains fail-closed.

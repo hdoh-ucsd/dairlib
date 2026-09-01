@@ -1079,3 +1079,28 @@ did expose a bookkeeping defect: entering the next loop iteration clears the
 last productive-cycle boolean before a safe measured-budget defer. Gate 47
 must retain cumulative productive-handoff provenance while keeping the global
 terminal tolerance as the only task-success authority.
+
+## Gate 47 — cumulative handoff and budget-defer provenance
+
+Terminal classification now consumes a cumulative productive-cycle latch,
+not the current iteration's transient boolean. A pure evaluator separates
+closed-loop handoff, unchanged terminal acceptance, return code, and reason.
+Regression tests cover both productive-then-deferred and
+deferred-without-progress states.
+
+```text
+source commit:                    dce8b368
+config/settings/tolerances:       unchanged
+physical output:                  /root/push_anything_ADMM/results/xarm6_budget_defer_provenance_8000_EM8K9f
+physical productive/defer branch: not reached
+terminal-status regressions:      2 PASS
+focused Bazel tests:              2 targets PASS
+simulator terminal:               FAIL (0.797272 m / 3.13386 rad)
+```
+
+Gate 47 passes deterministic provenance acceptance; its physical replicate
+correctly failed closed after a wrong-polarity first cycle. Across recent
+rollouts, the remaining limiting behavior is now measured candidate response:
+C3+ frequently predicts order-one yaw descent while the physical T produces
+only hundredths of a radian or the opposite sign. Gate 48 must quantify model
+gain/sign calibration per local contact before ranking another dwell.

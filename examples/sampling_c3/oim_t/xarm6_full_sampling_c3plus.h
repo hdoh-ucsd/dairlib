@@ -477,4 +477,19 @@ XarmFullSamplingC3OscExecutionPlan BuildXarmFullSamplingC3OscExecutionPlan(
     const XarmFullSamplingC3TaskSpacePlan& c3_plan,
     double reposition_speed, double c3_dt);
 
+struct XarmFullSamplingC3TerminalStatus {
+  bool closed_loop_handoff{};
+  bool accepted{};
+  int return_code{};
+  std::string reason;
+};
+
+// Separates cumulative physical handoff provenance from terminal task
+// acceptance. A later measured-budget defer must not erase an earlier
+// productive cycle, while the unchanged pose tolerances remain authoritative.
+XarmFullSamplingC3TerminalStatus EvaluateXarmFullSamplingC3TerminalStatus(
+    int reached_initial_waypoints, int total_initial_waypoints,
+    bool any_productive_cycle, bool cycle_budget_deferred,
+    int execution_updates, int execution_budget, bool terminal_pose_accepted);
+
 }  // namespace dairlib::oim
