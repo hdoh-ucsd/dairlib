@@ -250,8 +250,16 @@ OSQPCscMatrix* EigenSparseToCSC(const Eigen::SparseMatrix<OSQPFloat>& mat) {
   for (int i = 0; i < mat.cols() + 1; ++i) {
     outer_indices[i] = static_cast<OSQPInt>(*(mat.outerIndexPtr() + i));
   }
-  return OSQPCscMatrix_new(mat.rows(), mat.cols(), mat.nonZeros(), values,
-                           inner_indices, outer_indices);
+  OSQPCscMatrix* result = OSQPCscMatrix_new(
+      mat.rows(), mat.cols(), mat.nonZeros(), values, inner_indices,
+      outer_indices);
+  DRAKE_DEMAND(result != nullptr);
+  // OSQPCscMatrix_new marks caller-provided arrays as borrowed.  These arrays
+  // are freshly allocated for this wrapper, so transfer their ownership to the
+  // OSQP matrix.  Otherwise OSQPCscMatrix_free releases only the small wrapper
+  // and leaks x/i/p every time FastOsqpSolver rebuilds a workspace.
+  result->owned = 1;
+  return result;
 }
 
 void UpdateCSCFromEigenSparse(

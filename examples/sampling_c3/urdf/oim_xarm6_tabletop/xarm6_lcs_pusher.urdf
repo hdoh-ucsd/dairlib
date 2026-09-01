@@ -1,0 +1,52 @@
+<?xml version="1.0"?>
+<!-- Three-translation task-space pusher for the OIM xArm LCS plant.
+     The collision radius is the measured xArm stick radius. Whole-capsule
+     arm clearance remains an execution-feasibility constraint. -->
+<robot name="xarm_lcs_pusher">
+  <link name="xarm_lcs_pusher_base"/>
+  <link name="xarm_lcs_pusher_x"/>
+  <link name="xarm_lcs_pusher_y"/>
+  <link name="xarm_lcs_pusher">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="0.057"/>
+      <inertia ixx="0.000001" ixy="0" ixz="0"
+               iyy="0.000001" iyz="0" izz="0.000001"/>
+    </inertial>
+    <visual>
+      <geometry><sphere radius="0.00555"/></geometry>
+      <material name="oim_purple"><color rgba="0.5 0.1 0.7 1"/></material>
+    </visual>
+    <collision>
+      <geometry><sphere radius="0.00555"/></geometry>
+      <drake:proximity_properties>
+        <drake:mu_static value="1.0"/>
+        <drake:mu_dynamic value="1.0"/>
+      </drake:proximity_properties>
+    </collision>
+  </link>
+  <joint name="xarm_lcs_pusher_x_joint" type="prismatic">
+    <parent link="xarm_lcs_pusher_base"/><child link="xarm_lcs_pusher_x"/>
+    <axis xyz="1 0 0"/>
+  </joint>
+  <joint name="xarm_lcs_pusher_y_joint" type="prismatic">
+    <parent link="xarm_lcs_pusher_x"/><child link="xarm_lcs_pusher_y"/>
+    <axis xyz="0 1 0"/>
+  </joint>
+  <joint name="xarm_lcs_pusher_z_joint" type="prismatic">
+    <parent link="xarm_lcs_pusher_y"/><child link="xarm_lcs_pusher"/>
+    <axis xyz="0 0 1"/>
+  </joint>
+  <transmission name="xarm_lcs_pusher_x_transmission" type="SimpleTransmission">
+    <actuator name="xarm_lcs_pusher_x_input"/>
+    <joint name="xarm_lcs_pusher_x_joint"/><mechanicalReduction>1</mechanicalReduction>
+  </transmission>
+  <transmission name="xarm_lcs_pusher_y_transmission" type="SimpleTransmission">
+    <actuator name="xarm_lcs_pusher_y_input"/>
+    <joint name="xarm_lcs_pusher_y_joint"/><mechanicalReduction>1</mechanicalReduction>
+  </transmission>
+  <transmission name="xarm_lcs_pusher_z_transmission" type="SimpleTransmission">
+    <actuator name="xarm_lcs_pusher_z_input"/>
+    <joint name="xarm_lcs_pusher_z_joint"/><mechanicalReduction>1</mechanicalReduction>
+  </transmission>
+</robot>

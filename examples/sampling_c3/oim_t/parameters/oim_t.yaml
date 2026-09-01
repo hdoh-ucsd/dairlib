@@ -9,13 +9,13 @@ robot:
   model_instance: xarm6_stick
   end_effector_body: xarm6_stick
   end_effector_point: [0.0, 0.0, 0.1794]
-  controlled_joints: [xarm6_joint1, xarm6_joint2, xarm6_joint3, xarm6_joint4, xarm6_joint5]
-  home_positions: [0.0, -0.7853981633974483, -0.7853981633974483, 0.0, 1.5707963267948966]
-  effort_limits: [50.0, 50.0, 32.0, 32.0, 32.0]
-  velocity_limits: [0.5, 0.5, 0.5, 0.5, 0.5]
-  velocity_servo_gains: [300.0, 300.0, 200.0, 200.0, 200.0]
+  controlled_joints: [xarm6_joint1, xarm6_joint2, xarm6_joint3, xarm6_joint4, xarm6_joint5, xarm6_joint6]
+  home_positions: [0.0, -0.7853981633974483, -0.7853981633974483, 0.0, 1.5707963267948966, 0.0]
+  effort_limits: [50.0, 50.0, 32.0, 32.0, 32.0, 20.0]
+  velocity_limits: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
+  velocity_servo_gains: [300.0, 300.0, 200.0, 200.0, 200.0, 200.0]
   # Recreates the source MJCF joint4 spring ignored by Drake's parser.
-  passive_stiffness: [0.0, 0.0, 0.0, 175.0, 0.0]
+  passive_stiffness: [0.0, 0.0, 0.0, 175.0, 0.0, 0.0]
 
 simulation:
   scene_model: examples/sampling_c3/urdf/oim_xarm6_tabletop/xarm6_pusht_tabletop/open_table_sampling_c3plus.xml
@@ -33,7 +33,14 @@ object:
   body: block
   start_pose: [0.381, 0.400, 0.0]
   goal_pose: [0.381, -0.400, 3.1416]
+  # Initial rollout state. The live receding controller replaces these zeros
+  # with the measured spatial T velocity from OIM_T_STATE_SIMULATION.
+  start_angular_velocity_W: [0.0, 0.0, 0.0]
+  start_linear_velocity_W: [0.0, 0.0, 0.0]
   resting_height: 0.0298
+  mass: 0.1
+  # Exact Izz from t_block.sdf about the composite center of mass.
+  planar_moment_inertia: 0.000124043
 
 task:
   pose_frame: oim_world
@@ -49,18 +56,108 @@ controller:
   # DAIRLab Sampling-C3 OSC translational gains, carried over unchanged.
   task_space_kp: [200.0, 200.0, 200.0]
   task_space_kd: [20.0, 20.0, 20.0]
+  # Weak six-joint posture objective derived from config/osc_xarm6_oim.yaml. It is
+  # latched at descent entry and remains two orders below Cartesian tracking.
+  descent_posture_kp: 10.0
+  descent_posture_kd: 3.0
+  descent_posture_weight: 0.01
+  # Primary six-DOF tracking during collision-checked repositioning. These
+  # match the established primary task-space PD scale; unlike the weak
+  # null-space posture objective above, this is the only active OSC task.
+  reposition_posture_kp: 200.0
+  reposition_posture_kd: 20.0
+  descent_diff_ik_centering_gain: 0.1
+  descent_diff_ik_max_velocity: 0.1
   task_space_plan_step_limit: 0.01
+  # 0.05 m with Kp=200 corresponds to DAIRLab's 10 m/s^2 OSC scale.
+  approach_command_step_limit: 0.05
+  # Use the canonical C3 task window during the long vertical transit.
+  descent_command_step_limit: 0.01
   # Measured stick radius and explicit free-space/contact transition gates.
   pusher_radius: 0.00555
   approach_clearance: 0.005
+  # Descend outside the T collision envelope, then engage laterally at height.
+  descent_clearance: 0.020
+  approach_planar_tolerance: 0.005
   contact_activation_tolerance: 0.003
-  sampling_c3_options_file: examples/sampling_c3/oim_t/parameters/sampling_c3plus_options.yaml
-  sampling_params_file: examples/sampling_c3/oim_t/parameters/sampling_params.yaml
-  reposition_params_file: examples/sampling_c3/oim_t/parameters/reposition_params.yaml
-  progress_params_file: examples/sampling_c3/oim_t/parameters/progress_params.yaml
-  osc_params_file: examples/sampling_c3/oim_t/parameters/osc_params.yaml
+  # Rotational exact-T planning and object-x corridor rejection.
+  object_yaw_cost_weight: 50.0
+  yaw_selection_weight: 0.01
+  lateral_drift_weight: 25.0
+  lateral_drift_tolerance: 0.005
+  # Maintain off-center normal loading after reaching the first C3 target.
+  minimum_contact_normal_step: 0.002
+  # DAIRLab-anything piecewise-linear repositioning, specialized to OIM-T.
+  reposition_speed: 0.18
+  reposition_waypoint_height: 0.07738005
+  successor_minimum_contact_steps: 1000
+  successor_progress_window_steps: 2000
+  successor_minimum_yaw_progress: 0.002
+  successor_minimum_translation_progress: 0.002
+  successor_cost_hysteresis_fraction: 0.6
   osqp_settings_file: solvers/osqp_options_default.yaml
   osc_qp_settings_file: solvers/default_osc_osqp_settings.yaml
+
+# Full Sampling-C3+ is opt-in. These are the unchanged Push-T C3+ structural
+# settings, plus friction coefficients derived from the imported collision
+# materials with Drake's harmonic-mean combination rule. The reduced exact-T
+# default does not consume this block.
+full_sampling_c3plus:
+  contact_model: anitescu
+  horizon: 5
+  admm_iterations: 3
+  num_threads: 5
+  delta_option: 1
+  warm_start: false
+  penalize_input_change: false
+  end_on_qp_step: false
+  scale_lcs: true
+  rho_scale: 3.0
+  gamma: 1.0
+  qp_projection_alpha: 0.01
+  qp_projection_scaling: 1.0
+  num_friction_directions: 2
+  # Simplified EE and ground use mu=1.0. The T collision uses mu=0.3.
+  pusher_ground_friction: 1.0
+  pusher_object_friction: 0.4615384615384615
+  object_ground_friction: 0.4615384615384615
+  # Unchanged Push-T pose-tracking C3+ costs.
+  state_cost_scale: 50.0
+  input_cost_scale: 1.0
+  consensus_cost_scale: 0.01
+  projection_cost_scale: 0.26
+  state_cost_diagonal: [0.01, 0.01, 0.01,
+                        0.1, 0.1, 0.1, 0.1,
+                        200.0, 200.0, 120.0,
+                        5.0, 5.0, 5.0,
+                        0.05, 0.05, 0.05,
+                        0.05, 0.05, 0.05]
+  input_cost_diagonal: [0.01, 0.01, 0.01]
+  consensus_lambda_weight: 2.0
+  consensus_eta_weight: 1.0
+  projection_lambda_weight: 20.0
+  projection_eta_weight: 1.0
+  # Fixed before the first full spatial solve. A failed residual is diagnosed;
+  # it is not permission to loosen these thresholds or increase ADMM steps.
+  dynamics_residual_tolerance: 0.0001
+  equality_residual_tolerance: 0.0001
+  nonnegative_residual_tolerance: 0.000001
+  complementarity_residual_tolerance: 0.0001
+  consensus_residual_tolerance: 0.001
+  # DAIRLab Sampling-C3 feasibility constraints. Workspace and force limits
+  # are the Push-T values; EE velocity limits are explicit in Anything.
+  workspace_lower: [0.15, -0.6, -0.01]
+  workspace_upper: [0.9, 0.6, 0.3]
+  workspace_margin: 0.02
+  input_lower: [-50.0, -50.0, -50.0]
+  input_upper: [50.0, 50.0, 50.0]
+  ee_velocity_lower: [-0.14, -0.14, -0.14]
+  ee_velocity_upper: [0.14, 0.14, 0.14]
+  perimeter_sample_count: 16
+  random_seed: 0
+  mesh_sample_count: 16
+  mesh_random_seed: 1
+  num_outer_threads: 4
 
 lcm:
   robot_input_channel: XARM_INPUT_SIMULATION

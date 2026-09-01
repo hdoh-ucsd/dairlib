@@ -112,3 +112,14 @@ cc_test(
         "@googletest//:gtest_main",
     ],
 )
+
+cc_test(
+    name = "fast_osqp_solver_test",
+    size = "small",
+    srcs = ["test/fast_osqp_solver_test.cc"],
+    deps = [
+        ":fast_osqp_solver",
+        "@drake//:drake_shared_library",
+        "@googletest//:gtest_main",
+    ],
+)

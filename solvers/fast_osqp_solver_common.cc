@@ -21,7 +21,24 @@ FastOsqpSolver::FastOsqpSolver()
     : SolverBase(id(), &is_available, &is_enabled,
                  &ProgramAttributesSatisfied) {}
 
-FastOsqpSolver::~FastOsqpSolver() = default;
+FastOsqpSolver::~FastOsqpSolver() {
+  if (workspace_ != nullptr) {
+    osqp_cleanup(workspace_);
+    workspace_ = nullptr;
+  }
+  if (P_csc_ != nullptr) {
+    OSQPCscMatrix_free(P_csc_);
+    P_csc_ = nullptr;
+  }
+  if (A_csc_ != nullptr) {
+    OSQPCscMatrix_free(A_csc_);
+    A_csc_ = nullptr;
+  }
+  if (osqp_settings_ != nullptr) {
+    OSQPSettings_free(osqp_settings_);
+    osqp_settings_ = nullptr;
+  }
+}
 
 SolverId FastOsqpSolver::id() {
   static const drake::never_destroyed<SolverId> singleton{"OSQP"};

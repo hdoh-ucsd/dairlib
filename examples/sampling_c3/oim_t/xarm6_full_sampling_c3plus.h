@@ -1,0 +1,369 @@
+#pragma once
+
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <Eigen/Core>
+#include <Eigen/Geometry>
+
+#include "examples/sampling_c3/parameter_headers/oim_t_params.h"
+
+namespace dairlib::oim {
+
+// The reduced planner remains the default until every full Sampling-C3+ gate
+// has passed. This enum is the executable's explicit compatibility boundary.
+enum class XarmSamplingC3PlannerMode {
+  kReducedExactT,
+  kFullSamplingC3Plus,
+};
+
+XarmSamplingC3PlannerMode ParseXarmSamplingC3PlannerMode(
+    const std::string& mode);
+std::string XarmSamplingC3PlannerModeName(
+    XarmSamplingC3PlannerMode mode);
+
+// The open_table LCS constrains object roll, pitch, and vertical translation
+// through table contact. Preserve measured planar motion while removing Drake
+// contact-chatter in those three constrained coordinates at the model boundary.
+std::pair<Eigen::Vector3d, Eigen::Vector3d>
+ConditionOpenTableObjectVelocity(
+    const Eigen::Vector3d& angular_velocity_W,
+    const Eigen::Vector3d& linear_velocity_W);
+
+struct XarmFullSamplingC3PlanarSettleReceipt {
+  bool accepted{};
+  double planar_translation_delta{};
+  double yaw_delta{};
+  double vertical_position_error{};
+  double tilt_angle{};
+};
+
+// Instantaneous Drake contact velocities contain table-compliance chatter.
+// Admit a new planar solve only after consecutive measured poses are stable
+// and the T remains upright at its configured resting height.
+XarmFullSamplingC3PlanarSettleReceipt
+EvaluateXarmFullSamplingC3PlanarSettle(
+    const Eigen::Vector3d& previous_position_W,
+    const Eigen::Quaterniond& previous_orientation_WO,
+    const Eigen::Vector3d& current_position_W,
+    const Eigen::Quaterniond& current_orientation_WO,
+    double resting_height, double planar_translation_tolerance,
+    double yaw_tolerance, double vertical_position_tolerance,
+    double tilt_tolerance);
+
+// Preserve the unchanged outer lateral tolerance while reserving one existing
+// contact-activation band for the next physical response.
+double FullSamplingC3LateralReserveLimit(
+    double lateral_drift_tolerance, double contact_activation_tolerance);
+
+// The spatial sampler covers the complete vertical side mesh.  Progress and
+// recovery execution use the central band so the pusher cannot realize a
+// nominal planar sample as an upper/lower-edge contact.
+bool IsFullSamplingC3CentralSideContact(
+    double sample_height_O, double object_half_height, double pusher_radius);
+
+// A new contact cycle is not admitted unless the remaining measured-update
+// budget can still contain its unchanged minimum contact dwell. Repositioning
+// consumes additional updates, so equality is intentionally insufficient.
+bool HasFullSamplingC3ContactDwellBudget(
+    int updates_used, int update_budget, int minimum_contact_steps);
+
+bool IsFullSamplingC3WrongPolarityResponse(
+    double start_signed_error, double measured_signed_error,
+    int response_steps, int minimum_contact_steps);
+
+struct XarmFullSamplingC3TerminalDescentReceipt {
+  bool translation_nonregressive{};
+  bool orientation_nonregressive{};
+  bool minimum_progress{};
+  bool accepted{};
+  double translation_progress{};
+  double orientation_progress{};
+};
+
+// A cycle may improve either terminal component by its existing minimum, but
+// it may not purchase that progress by worsening the other component. This is
+// a parameter-free Pareto gate over the unchanged global open_table errors.
+XarmFullSamplingC3TerminalDescentReceipt
+EvaluateFullSamplingC3TerminalDescent(
+    const Eigen::Vector3d& start_object_pose,
+    const Eigen::Vector3d& end_object_pose,
+    const Eigen::Vector3d& goal_object_pose,
+    double minimum_translation_progress,
+    double minimum_orientation_progress);
+
+// A physical contact response is retained in measured coordinates together
+// with the model prediction that selected it.  The contact point and normal
+// identify a local face neighborhood without depending on provider-specific
+// sample names.
+struct XarmFullSamplingC3MeasuredResponse {
+  Eigen::Vector3d start_object_pose{Eigen::Vector3d::Zero()};
+  Eigen::Vector3d predicted_terminal_object_pose{Eigen::Vector3d::Zero()};
+  Eigen::Vector3d measured_terminal_object_pose{Eigen::Vector3d::Zero()};
+  Eigen::Vector2d sample_point_O{Eigen::Vector2d::Zero()};
+  Eigen::Vector2d sample_normal_O{Eigen::Vector2d::Zero()};
+  bool lateral_rejected{};
+};
+
+struct XarmFullSamplingC3ResponseConditioningReceipt {
+  int matching_observations{};
+  int compatible_observations{};
+  int lateral_rejections{};
+  int terminal_regressions{};
+  // 0: all local observations compatible, 1: unseen, 2: incompatible.
+  // This discrete class intentionally avoids inventing a scalar tuning weight.
+  int ranking_class{1};
+  bool corrected_terminal_accepted{};
+  bool corrected_lateral_accepted{};
+  Eigen::Vector3d mean_prediction_residual{Eigen::Vector3d::Zero()};
+  Eigen::Vector3d corrected_terminal_object_pose{Eigen::Vector3d::Zero()};
+  double corrected_lateral_error{};
+};
+
+// Corrects one candidate's predicted terminal displacement with accumulated
+// physical model residuals from the same pose/contact neighborhood. Existing
+// task tolerances define both neighborhoods; no learned threshold or weight is
+// introduced. Invalid inputs fail loudly rather than silently changing order.
+XarmFullSamplingC3ResponseConditioningReceipt
+EvaluateFullSamplingC3MeasuredResponseConditioning(
+    const Eigen::Vector3d& start_object_pose,
+    const Eigen::Vector3d& predicted_terminal_object_pose,
+    const Eigen::Vector2d& sample_point_O,
+    const Eigen::Vector2d& sample_normal_O,
+    const Eigen::Vector3d& goal_object_pose,
+    const std::vector<XarmFullSamplingC3MeasuredResponse>& observations,
+    double translation_neighborhood,
+    double orientation_neighborhood,
+    double lateral_drift_tolerance,
+    double minimum_translation_progress,
+    double minimum_orientation_progress);
+
+// One-object DAIRLab Sampling-C3 state layout:
+//   q = [pusher xyz, object quaternion wxyz, object xyz]
+//   v = [pusher linear xyz, object angular xyz, object linear xyz]
+// Explicit indices prevent silent drift as spatial contacts are introduced.
+struct XarmFullSamplingC3State {
+  static constexpr int kPusherPosition = 0;
+  static constexpr int kObjectQuaternion = 3;
+  static constexpr int kObjectPosition = 7;
+  static constexpr int kPusherLinearVelocity = 10;
+  static constexpr int kObjectAngularVelocity = 13;
+  static constexpr int kObjectLinearVelocity = 16;
+  static constexpr int kNumPositions = 10;
+  static constexpr int kNumVelocities = 9;
+  static constexpr int kSize = kNumPositions + kNumVelocities;
+  static constexpr int kInputSize = 3;
+
+  Eigen::Vector3d pusher_position_W{Eigen::Vector3d::Zero()};
+  Eigen::Quaterniond object_quaternion_WO{Eigen::Quaterniond::Identity()};
+  Eigen::Vector3d object_position_W{Eigen::Vector3d::Zero()};
+  Eigen::Vector3d pusher_linear_velocity_W{Eigen::Vector3d::Zero()};
+  Eigen::Vector3d object_angular_velocity_W{Eigen::Vector3d::Zero()};
+  Eigen::Vector3d object_linear_velocity_W{Eigen::Vector3d::Zero()};
+
+  Eigen::VectorXd Encode() const;
+  static XarmFullSamplingC3State Decode(const Eigen::VectorXd& state);
+};
+
+struct XarmFullSamplingC3LcsReceipt {
+  bool finite{};
+  int num_states{};
+  int num_inputs{};
+  int num_contact_pairs{};
+  int num_contact_variables{};
+  int horizon{};
+  double dt{};
+  double complementarity_offset_min{};
+  double complementarity_offset_max{};
+};
+
+// Builds the full spatial pusher/T/ground LCS using DAIRLab's multibody
+// factory. This is an inspection gate only; C3+ execution is enabled later,
+// after numerical residual thresholds are fixed and verified.
+XarmFullSamplingC3LcsReceipt BuildXarmFullSamplingC3SpatialLcsWitness(
+    const OimTParams& params);
+
+struct XarmFullSamplingC3SolveReceipt {
+  bool finite{};
+  bool accepted{};
+  bool dynamic_rollout_accepted{};
+  bool dynamic_rollout_lcp_solved{};
+  bool dynamic_rollout_workspace_accepted{};
+  double elapsed{};
+  double diagnostic_elapsed{};
+  double lambda_scale{};
+  double initial_state_residual{};
+  double dynamics_residual{};
+  double returned_plan_dynamics_residual{};
+  double equality_residual{};
+  double nonnegative_residual{};
+  double complementarity_residual{};
+  double projected_nonnegative_residual{};
+  double projected_complementarity_residual{};
+  double consensus_residual{};
+  double dynamic_rollout_dynamics_residual{};
+  double dynamic_rollout_nonnegative_residual{};
+  double dynamic_rollout_complementarity_residual{};
+  double dynamic_rollout_workspace_violation{};
+  double planned_input_bound_violation{};
+  double dynamic_rollout_cost{};
+  Eigen::Vector3d dynamic_terminal_pusher_position{
+      Eigen::Vector3d::Zero()};
+  Eigen::Vector3d dynamic_terminal_object_position{
+      Eigen::Vector3d::Zero()};
+  std::vector<Eigen::VectorXd> dynamic_state_trajectory;
+  std::vector<Eigen::VectorXd> planned_input_trajectory;
+};
+
+XarmFullSamplingC3SolveReceipt RunXarmFullSamplingC3FirstSolve(
+    const OimTParams& params);
+
+// Deterministic exact-T samples are expressed in the object's planar frame.
+// Their ordering and geometry are identical to the retained reduced planner,
+// providing a traceable first sampling provider before stochastic/mesh
+// providers are enabled.
+struct XarmFullSamplingC3ContactSample {
+  Eigen::Vector2d point_O{Eigen::Vector2d::Zero()};
+  Eigen::Vector2d outward_normal_O{Eigen::Vector2d::Zero()};
+  std::string name;
+  double height_O{};
+};
+
+const std::vector<XarmFullSamplingC3ContactSample>&
+GetXarmFullSamplingC3ExactTSamples();
+
+std::vector<XarmFullSamplingC3ContactSample>
+GenerateXarmFullSamplingC3PerimeterSamples(int count, int seed);
+
+std::vector<XarmFullSamplingC3ContactSample>
+GenerateXarmFullSamplingC3MeshNormalSamples(int count, int seed);
+
+// Deterministic local refinement of the long stem-left face. This provider
+// resolves the narrow intersection between the xArm reachability boundary and
+// the unchanged object-x drift gate without changing a random seed.
+std::vector<XarmFullSamplingC3ContactSample>
+GenerateXarmFullSamplingC3StemLeftRefinementSamples(int count);
+
+std::vector<XarmFullSamplingC3ContactSample>
+GenerateXarmFullSamplingC3StemRightRefinementSamples(int count);
+
+struct XarmFullSamplingC3CandidateReceipt {
+  int sample_index{-1};
+  std::string sample_name;
+  Eigen::Vector3d initial_pusher_position_W{Eigen::Vector3d::Zero()};
+  Eigen::Vector2d sample_point_O{Eigen::Vector2d::Zero()};
+  Eigen::Vector2d sample_normal_O{Eigen::Vector2d::Zero()};
+  double sample_height_O{};
+  XarmFullSamplingC3SolveReceipt solve;
+};
+
+struct XarmFullSamplingC3CorridorPrefixReceipt {
+  bool accepted{};
+  int original_state_knots{};
+  int retained_state_knots{};
+  double terminal_lateral_error{};
+  XarmFullSamplingC3CandidateReceipt execution_candidate;
+};
+
+// Converts a full-horizon solver candidate into its longest contiguous
+// receding-horizon execution prefix whose predicted object x remains inside
+// the unchanged lateral corridor. The solver receipt and full candidate are
+// inputs by value and remain available to the caller for scientific tracing;
+// only the explicitly named execution copy is shortened.
+XarmFullSamplingC3CorridorPrefixReceipt
+BuildXarmFullSamplingC3CorridorSafePrefix(
+    const XarmFullSamplingC3CandidateReceipt& candidate,
+    double goal_object_x, double lateral_drift_tolerance);
+
+struct XarmFullSamplingC3BatchReceipt {
+  bool accepted{};
+  int num_samples{};
+  int num_feasible{};
+  int selected_index{-1};
+  std::string selected_name;
+  double selected_cost{};
+  std::vector<XarmFullSamplingC3CandidateReceipt> candidates;
+};
+
+// Solves and dynamically re-simulates every deterministic contact sample.
+// Only residual-accepted dynamic rollouts participate in cost ranking.
+XarmFullSamplingC3BatchReceipt RunXarmFullSamplingC3ExactTBatch(
+    const OimTParams& params);
+
+XarmFullSamplingC3BatchReceipt RunXarmFullSamplingC3PerimeterBatch(
+    const OimTParams& params);
+
+XarmFullSamplingC3BatchReceipt RunXarmFullSamplingC3PerimeterBatchParallel(
+    const OimTParams& params);
+
+XarmFullSamplingC3BatchReceipt RunXarmFullSamplingC3MeshBatchParallel(
+    const OimTParams& params);
+
+XarmFullSamplingC3BatchReceipt
+RunXarmFullSamplingC3StemLeftRefinementBatchParallel(
+    const OimTParams& params);
+
+XarmFullSamplingC3BatchReceipt
+RunXarmFullSamplingC3StemRightRefinementBatchParallel(
+    const OimTParams& params);
+
+struct XarmFullSamplingC3CandidateBuffer {
+  bool accepted{};
+  int total_candidates{};
+  std::vector<XarmFullSamplingC3CandidateReceipt> successful;
+  std::vector<XarmFullSamplingC3CandidateReceipt> unsuccessful;
+};
+
+// Merges provider batches without re-solving. Successful candidates are
+// stably ordered by dynamic rollout cost; rejected candidates remain visible.
+XarmFullSamplingC3CandidateBuffer BuildXarmFullSamplingC3CandidateBuffer(
+    const std::vector<XarmFullSamplingC3BatchReceipt>& batches);
+
+// Replenishment view used only after the workspace-filtered buffer is empty.
+// It retains dynamically accepted, input-bounded contacts for mandatory live
+// xArm IK and whole-capsule validation; it does not reclassify solver failures.
+XarmFullSamplingC3CandidateBuffer
+BuildXarmFullSamplingC3ContactFeasibleCandidateBuffer(
+    const XarmFullSamplingC3CandidateBuffer& workspace_filtered_buffer);
+
+struct XarmFullSamplingC3TaskSpacePlan {
+  bool accepted{};
+  std::string sample_name;
+  double cost{};
+  Eigen::VectorXd time_vector;
+  Eigen::MatrixXd pusher_positions_W;
+  Eigen::MatrixXd pusher_velocities_W;
+  Eigen::Vector2d sample_point_O{Eigen::Vector2d::Zero()};
+  Eigen::Vector2d sample_normal_O{Eigen::Vector2d::Zero()};
+  double sample_height_O{};
+};
+
+XarmFullSamplingC3TaskSpacePlan BuildXarmFullSamplingC3TaskSpacePlan(
+    const XarmFullSamplingC3CandidateBuffer& buffer, double dt);
+
+// Applies the unchanged object-x tolerance before cost ranking. Numerically
+// valid candidates that fail this task-level gate remain preserved in the
+// input buffer and are not reclassified as solver failures.
+XarmFullSamplingC3TaskSpacePlan
+BuildXarmFullSamplingC3LateralGuardedTaskSpacePlan(
+    const XarmFullSamplingC3CandidateBuffer& buffer, double dt,
+    double goal_object_x, double lateral_drift_tolerance);
+
+struct XarmFullSamplingC3OscExecutionPlan {
+  bool accepted{};
+  Eigen::VectorXd time_vector;
+  Eigen::MatrixXd positions_W;
+  int acquisition_knots{};
+  int c3_knots{};
+};
+
+XarmFullSamplingC3OscExecutionPlan BuildXarmFullSamplingC3OscExecutionPlan(
+    const Eigen::Vector3d& current_tip_W,
+    const Eigen::Vector3d& planar_waypoint_W,
+    const Eigen::Vector3d& elevated_waypoint_W,
+    const Eigen::Vector3d& standoff_waypoint_W,
+    const XarmFullSamplingC3TaskSpacePlan& c3_plan,
+    double reposition_speed, double c3_dt);
+
+}  // namespace dairlib::oim

@@ -73,7 +73,7 @@ class FastOsqpSolver final : public drake::solvers::SolverBase {
   mutable std::vector<Eigen::Triplet<OSQPFloat>> P_triplets_;
   mutable std::vector<Eigen::Triplet<OSQPFloat>> A_triplets_;
 
-  mutable OSQPSettings* osqp_settings_;
+  mutable OSQPSettings* osqp_settings_ = nullptr;
   mutable OSQPSolver* workspace_ = nullptr;
   mutable bool warm_start_ = true;
   mutable bool is_init_ = false;

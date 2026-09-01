@@ -198,11 +198,13 @@
                 <geom name="xarm6_link5" mesh="link5" euler="0 0 180"
                       material="xarm6_red" mass="1.275"/>
 
-                <!-- link6 (the wrist flange): joint6 (wrist roll) is fixed,
-                     not actuated -- matches the real vendor xarm6_stick.urdf,
-                     which locks this DOF since rolling a symmetric stick
-                     about its own axis has no effect on pushing. -->
+                <!-- True xArm6 wrist roll.  The previous OIM import welded
+                     this degree of freedom because the stick is
+                     axis-symmetric; the native six-joint controller keeps it
+                     available for posture/null-space regulation.  Limits
+                     follow UFACTORY's xarm6 URDF. -->
                 <body name="xarm6_link6" pos="0.076010 0.068771 0.004339" euler="-90 0 0" gravcomp="1">
+                  <joint name="xarm6_joint6" axis="0 0 1" range="-360 360"/>
                   <geom name="xarm6_link6" mesh="link6" euler="0 0 90"
                         material="xarm6_white" mass="0.1096"/>
 
@@ -230,7 +232,7 @@
          which only converts angle-valued attributes like <joint range>,
          not actuator ctrlrange). forcerange caps output torque at the real
          vendor per-joint effort limits from README point 9 (joint1/2=50
-         N*m, joint3/4/5=32 N*m).
+         N*m, joint3/4/5=32 N*m, joint6=20 N*m).
 
          ctrlrange/kv are NOT the real vendor max-speed spec (unsourced,
          like the stick mass elsewhere in this file) -- they're picked to
@@ -269,5 +271,7 @@
               ctrlrange="-0.5 0.5" forcerange="-32 32" kv="200"/>
     <velocity class="xarm6" name="xarm6_motor5" joint="xarm6_joint5"
               ctrlrange="-0.5 0.5" forcerange="-32 32" kv="200"/>
+    <velocity class="xarm6" name="xarm6_motor6" joint="xarm6_joint6"
+              ctrlrange="-0.5 0.5" forcerange="-20 20" kv="200"/>
   </actuator>
 </mujoco>

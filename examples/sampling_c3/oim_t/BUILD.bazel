@@ -3,19 +3,61 @@ cc_binary(
     srcs = ["oim_t_config_check.cc"],
     data = ["parameters/oim_t.yaml"],
     deps = [
-        "//examples/sampling_c3/parameter_headers:oim_t_params",
+        ":xarm6_process_common",
         "@drake//:drake_shared_library",
         "@gflags",
     ],
 )
 
 cc_library(
-    name = "xarm_process_common",
-    srcs = ["xarm_process_common.cc"],
-    hdrs = ["xarm_process_common.h"],
+    name = "xarm6_process_common",
+    srcs = ["xarm6_process_common.cc"],
+    hdrs = ["xarm6_process_common.h"],
     deps = [
         "//examples/sampling_c3/parameter_headers:oim_t_params",
         "@drake//:drake_shared_library",
+    ],
+)
+
+cc_library(
+    name = "xarm6_full_sampling_c3plus",
+    srcs = ["xarm6_full_sampling_c3plus.cc"],
+    hdrs = ["xarm6_full_sampling_c3plus.h"],
+    deps = [
+        "//examples/sampling_c3:sampling_c3_utils",
+        "//examples/sampling_c3/parameter_headers:oim_t_params",
+        "@c3//:libc3",
+        "@c3//core:traj_eval",
+        "@drake//:drake_shared_library",
+    ],
+)
+
+cc_test(
+    name = "xarm6_full_sampling_c3plus_test",
+    size = "small",
+    srcs = ["test/xarm6_full_sampling_c3plus_test.cc"],
+    data = [
+        "parameters/oim_t.yaml",
+        "//examples/sampling_c3:urdfs",
+    ],
+    deps = [
+        ":xarm6_full_sampling_c3plus",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "xarm6_open_table_test",
+    size = "small",
+    srcs = ["test/xarm6_open_table_test.cc"],
+    data = [
+        "parameters/oim_t.yaml",
+        "//examples/sampling_c3:urdfs",
+    ],
+    deps = [
+        ":xarm6_process_common",
+        "@drake//:drake_shared_library",
+        "@googletest//:gtest_main",
     ],
 )
 
@@ -27,18 +69,40 @@ cc_library(
         "//examples/sampling_c3:urdfs",
     ],
     deps = [
-        ":xarm_process_common",
+        ":xarm6_full_sampling_c3plus",
+        ":xarm6_process_common",
         "//lcm:lcm_trajectory_saver",
         "//systems:robot_lcm_systems",
         "//systems/framework:lcm_driven_loop",
         "//systems/controllers/osc:operational_space_control",
+        "//systems/controllers/osc:joint_space_tracking_data",
+        "//systems/controllers/osc:rot_space_tracking_data",
         "//systems/controllers/osc:trans_space_tracking_data",
         "@drake//:drake_shared_library",
         "@c3//:libc3",
         "@gflags",
     ],
 ) for process in [
-    "xarm_sim",
-    "xarm_osc_controller",
-    "xarm_sampling_c3_controller",
+    "xarm6_sim",
+    "xarm6_osc_controller",
+    "xarm6_sampling_c3_controller",
 ]]
+
+# Compatibility labels preserve existing `bazel build`, `bazel test`, and
+# `bazel run` callers. Canonical files, targets, and produced binaries are all
+# explicitly xArm6-named; direct bazel-bin paths must use the xarm6_* names.
+[alias(
+    name = legacy,
+    actual = ":" + canonical,
+) for legacy, canonical in {
+    "xarm_process_common": "xarm6_process_common",
+    "xarm_full_sampling_c3plus": "xarm6_full_sampling_c3plus",
+    "xarm_sim": "xarm6_sim",
+    "xarm_osc_controller": "xarm6_osc_controller",
+    "xarm_sampling_c3_controller": "xarm6_sampling_c3_controller",
+}.items()]
+
+test_suite(
+    name = "xarm_full_sampling_c3plus_test",
+    tests = [":xarm6_full_sampling_c3plus_test"],
+)
