@@ -852,3 +852,32 @@ a late recovery remained unseen at selection and physically regressed
 translation. Gate 38 must demonstrate that a later local recovery candidate
 actually consumes a prior recovery observation, with incompatible corrected
 descent rejected before live IK.
+
+## Gate 38 — yaw-equivariant recovery-response conditioning
+
+Recovery residuals now live in the T object frame. Translation residuals are
+rotated from the observation world frame into O, averaged within the unchanged
+contact point/normal neighborhoods, and rotated into the current world frame.
+Yaw residuals are wrapped and transferred directly. The existing local
+measured-response estimator is unchanged; recovery uses a separate history so
+primary and corrective execution semantics cannot contaminate each other.
+
+```text
+source commit:                    4e667ef8
+worktree:                         dirty; Gate-38 implementation under test
+config SHA-256:                   d11cd65efbcf6ac7c814a0b690cc76f9135d27a9f607f6f10dc7d9b26051b990
+seed/settings/tolerances:         unchanged
+physical output:                  /root/push_anything_ADMM/results/xarm6_equivariant_recovery_8000_fb1lbo
+equivariant unit receipt:         PASS across pi/2 yaw
+recovery observations stored:     1
+later physical recovery reuse:    not reached
+honest productive cycles:         1
+simulator terminal:               FAIL (0.775391 m / 2.97934 rad)
+```
+
+Gate 38's transformation and isolated history are implemented and tested, but
+physical reuse remains pending. The next acquisition failed earlier: after the
+large yaw transition, the fixed neutral anchor had no position-only IK and its
+recovery anchor also failed contact IK. Gate 39 must construct a measured,
+reachable elevated anchor while preserving the same whole-capsule clearance
+and neutral-reacquisition ownership rules.

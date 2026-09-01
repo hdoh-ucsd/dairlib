@@ -357,6 +357,32 @@ TEST(XarmFullSamplingC3PlusTest,
   EXPECT_EQ(outside_neighborhood.matching_observations, 0);
 }
 
+TEST(XarmFullSamplingC3PlusTest,
+     EquivariantResponseConditioningTransfersAcrossLargeYaw) {
+  XarmFullSamplingC3MeasuredResponse observation;
+  observation.start_object_pose = Eigen::Vector3d(0.0, 0.0, 0.0);
+  observation.predicted_terminal_object_pose =
+      Eigen::Vector3d(0.0, -0.02, 0.0);
+  observation.measured_terminal_object_pose =
+      Eigen::Vector3d(0.0, -0.03, 0.0);
+  observation.sample_point_O = Eigen::Vector2d(0.0, 0.02);
+  observation.sample_normal_O = Eigen::Vector2d(0.0, 1.0);
+
+  const Eigen::Vector3d start(0.0, 0.0, M_PI_2);
+  const Eigen::Vector3d predicted(0.02, 0.0, M_PI_2);
+  const Eigen::Vector3d goal(0.03, 0.0, M_PI_2);
+  const auto receipt =
+      EvaluateFullSamplingC3EquivariantResponseConditioning(
+          start, predicted, observation.sample_point_O,
+          observation.sample_normal_O, goal, {observation}, 0.05, 0.1,
+          0.05, 0.001, 0.01);
+  EXPECT_EQ(receipt.matching_observations, 1);
+  EXPECT_EQ(receipt.ranking_class, 0);
+  EXPECT_TRUE(receipt.corrected_terminal_accepted);
+  EXPECT_TRUE(receipt.corrected_terminal_object_pose.isApprox(
+      Eigen::Vector3d(0.03, 0.0, M_PI_2), 1.0e-12));
+}
+
 TEST(XarmFullSamplingC3PlusTest, PlannerModesAreExplicit) {
   EXPECT_EQ(ParseXarmSamplingC3PlannerMode("reduced_exact_t"),
             XarmSamplingC3PlannerMode::kReducedExactT);

@@ -2848,6 +2848,8 @@ int DoMain(int argc, char* argv[]) {
               std::set<std::string> progress_neutral_anchor_candidates;
               std::vector<XarmFullSamplingC3MeasuredResponse>
                   measured_response_history;
+              std::vector<XarmFullSamplingC3MeasuredResponse>
+                  recovery_response_history;
               while (corrective_lateral_recovery &&
                      full_execution_updates < FLAGS_full_execution_steps) {
                 full_task_progress_cycle = false;
@@ -4389,12 +4391,12 @@ int DoMain(int argc, char* argv[]) {
                             return receipt;
                           }
                           return
-                              EvaluateFullSamplingC3MeasuredResponseConditioning(
+                              EvaluateFullSamplingC3EquivariantResponseConditioning(
                                   progress_end_pose, *terminal,
                                   candidate.sample_point_O,
                                   candidate.sample_normal_O,
                                   params.object.goal_pose,
-                                  measured_response_history,
+                                  recovery_response_history,
                                   params.task.translation_tolerance,
                                   params.task.orientation_tolerance,
                                   params.controller.lateral_drift_tolerance,
@@ -5105,10 +5107,14 @@ int DoMain(int argc, char* argv[]) {
                         !post_recovery_progress.lateral_accepted;
                     measured_response_history.push_back(
                         *selected_cycle_recovery_observation);
+                    recovery_response_history.push_back(
+                        *selected_cycle_recovery_observation);
                     std::cout <<
                         "full_sampling_c3plus_cycle_recovery_response_"
                         "observation=PASS history_size="
                               << measured_response_history.size()
+                              << " recovery_history_size="
+                              << recovery_response_history.size()
                               << " sample_point_O="
                               << selected_cycle_recovery_observation
                                      ->sample_point_O.transpose()

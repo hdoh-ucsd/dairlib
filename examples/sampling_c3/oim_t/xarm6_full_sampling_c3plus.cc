@@ -489,6 +489,125 @@ EvaluateFullSamplingC3MeasuredResponseConditioning(
   return receipt;
 }
 
+XarmFullSamplingC3ResponseConditioningReceipt
+EvaluateFullSamplingC3EquivariantResponseConditioning(
+    const Eigen::Vector3d& start_object_pose,
+    const Eigen::Vector3d& predicted_terminal_object_pose,
+    const Eigen::Vector2d& sample_point_O,
+    const Eigen::Vector2d& sample_normal_O,
+    const Eigen::Vector3d& goal_object_pose,
+    const std::vector<XarmFullSamplingC3MeasuredResponse>& observations,
+    double contact_translation_neighborhood,
+    double contact_orientation_neighborhood,
+    double lateral_drift_tolerance,
+    double minimum_translation_progress,
+    double minimum_orientation_progress) {
+  if (!start_object_pose.allFinite() ||
+      !predicted_terminal_object_pose.allFinite() ||
+      !sample_point_O.allFinite() || !sample_normal_O.allFinite() ||
+      !goal_object_pose.allFinite() ||
+      !std::isfinite(contact_translation_neighborhood) ||
+      !std::isfinite(contact_orientation_neighborhood) ||
+      !std::isfinite(lateral_drift_tolerance) ||
+      !std::isfinite(minimum_translation_progress) ||
+      !std::isfinite(minimum_orientation_progress) ||
+      contact_translation_neighborhood < 0.0 ||
+      contact_orientation_neighborhood < 0.0 ||
+      lateral_drift_tolerance < 0.0 ||
+      minimum_translation_progress < 0.0 ||
+      minimum_orientation_progress < 0.0 ||
+      sample_normal_O.norm() == 0.0) {
+    throw std::invalid_argument(
+        "equivariant response-conditioning inputs are invalid");
+  }
+  auto wrap = [](double angle) {
+    return std::atan2(std::sin(angle), std::cos(angle));
+  };
+  const Eigen::Vector2d candidate_normal = sample_normal_O.normalized();
+  Eigen::Vector2d mean_translation_residual_O = Eigen::Vector2d::Zero();
+  XarmFullSamplingC3ResponseConditioningReceipt receipt;
+  for (const auto& observation : observations) {
+    if (!observation.start_object_pose.allFinite() ||
+        !observation.predicted_terminal_object_pose.allFinite() ||
+        !observation.measured_terminal_object_pose.allFinite() ||
+        !observation.sample_point_O.allFinite() ||
+        !observation.sample_normal_O.allFinite() ||
+        observation.sample_normal_O.norm() == 0.0) {
+      throw std::invalid_argument(
+          "equivariant response observation is invalid");
+    }
+    const double contact_translation_distance =
+        (observation.sample_point_O - sample_point_O).norm();
+    const double contact_orientation_distance = std::acos(std::clamp(
+        candidate_normal.dot(observation.sample_normal_O.normalized()),
+        -1.0, 1.0));
+    if (contact_translation_distance > contact_translation_neighborhood ||
+        contact_orientation_distance > contact_orientation_neighborhood) {
+      continue;
+    }
+    ++receipt.matching_observations;
+    const Eigen::Vector2d predicted_delta_W =
+        observation.predicted_terminal_object_pose.head<2>() -
+        observation.start_object_pose.head<2>();
+    const Eigen::Vector2d measured_delta_W =
+        observation.measured_terminal_object_pose.head<2>() -
+        observation.start_object_pose.head<2>();
+    mean_translation_residual_O +=
+        Eigen::Rotation2Dd(-observation.start_object_pose.z()) *
+        (measured_delta_W - predicted_delta_W);
+    const double predicted_yaw_delta = wrap(
+        observation.predicted_terminal_object_pose.z() -
+        observation.start_object_pose.z());
+    const double measured_yaw_delta = wrap(
+        observation.measured_terminal_object_pose.z() -
+        observation.start_object_pose.z());
+    receipt.mean_prediction_residual.z() +=
+        wrap(measured_yaw_delta - predicted_yaw_delta);
+    const auto measured_terminal = EvaluateFullSamplingC3TerminalDescent(
+        observation.start_object_pose,
+        observation.measured_terminal_object_pose, goal_object_pose,
+        minimum_translation_progress, minimum_orientation_progress);
+    if (observation.lateral_rejected) ++receipt.lateral_rejections;
+    if (!measured_terminal.translation_nonregressive ||
+        !measured_terminal.orientation_nonregressive) {
+      ++receipt.terminal_regressions;
+    }
+  }
+
+  receipt.corrected_terminal_object_pose = predicted_terminal_object_pose;
+  if (receipt.matching_observations > 0) {
+    mean_translation_residual_O /= receipt.matching_observations;
+    receipt.mean_prediction_residual.head<2>() =
+        Eigen::Rotation2Dd(start_object_pose.z()) *
+        mean_translation_residual_O;
+    receipt.mean_prediction_residual.z() /= receipt.matching_observations;
+    receipt.corrected_terminal_object_pose.head<2>() +=
+        receipt.mean_prediction_residual.head<2>();
+    receipt.corrected_terminal_object_pose.z() = wrap(
+        receipt.corrected_terminal_object_pose.z() +
+        receipt.mean_prediction_residual.z());
+  }
+  const auto corrected_terminal = EvaluateFullSamplingC3TerminalDescent(
+      start_object_pose, receipt.corrected_terminal_object_pose,
+      goal_object_pose, minimum_translation_progress,
+      minimum_orientation_progress);
+  receipt.corrected_terminal_accepted = corrected_terminal.accepted;
+  receipt.corrected_lateral_error = std::abs(
+      receipt.corrected_terminal_object_pose.x() - goal_object_pose.x());
+  receipt.corrected_lateral_accepted =
+      receipt.corrected_lateral_error <= lateral_drift_tolerance;
+  if (receipt.matching_observations == 0) {
+    receipt.ranking_class = 1;
+  } else if (receipt.corrected_terminal_accepted &&
+             receipt.corrected_lateral_accepted) {
+    receipt.compatible_observations = receipt.matching_observations;
+    receipt.ranking_class = 0;
+  } else {
+    receipt.ranking_class = 2;
+  }
+  return receipt;
+}
+
 Eigen::VectorXd XarmFullSamplingC3State::Encode() const {
   const double quaternion_norm = object_quaternion_WO.norm();
   if (!std::isfinite(quaternion_norm) || quaternion_norm < 1.0e-12) {

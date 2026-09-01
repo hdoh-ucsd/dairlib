@@ -232,6 +232,24 @@ EvaluateFullSamplingC3MeasuredResponseConditioning(
     double minimum_translation_progress,
     double minimum_orientation_progress);
 
+// Recovery contacts are attached to the object. Expressing their model
+// residual in O and rotating it into the current W permits evidence reuse
+// after large yaw changes. Contact neighborhoods and task acceptance still
+// use the unchanged terminal tolerances.
+XarmFullSamplingC3ResponseConditioningReceipt
+EvaluateFullSamplingC3EquivariantResponseConditioning(
+    const Eigen::Vector3d& start_object_pose,
+    const Eigen::Vector3d& predicted_terminal_object_pose,
+    const Eigen::Vector2d& sample_point_O,
+    const Eigen::Vector2d& sample_normal_O,
+    const Eigen::Vector3d& goal_object_pose,
+    const std::vector<XarmFullSamplingC3MeasuredResponse>& observations,
+    double contact_translation_neighborhood,
+    double contact_orientation_neighborhood,
+    double lateral_drift_tolerance,
+    double minimum_translation_progress,
+    double minimum_orientation_progress);
+
 // One-object DAIRLab Sampling-C3 state layout:
 //   q = [pusher xyz, object quaternion wxyz, object xyz]
 //   v = [pusher linear xyz, object angular xyz, object linear xyz]

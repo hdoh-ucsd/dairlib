@@ -444,3 +444,9 @@ translation-only and rotation-only C3+ batches are generated from the same
 measured state. Decomposition affects proposal generation only: the unchanged
 global Pareto, response, corridor, live-IK, and capsule gates still decide
 whether any proposal may execute.
+
+Corrective-response transfer is rotationally equivariant. Model residuals are
+stored in the T object's frame and rotated into the current world frame before
+correcting a new candidate. Recovery observations have a dedicated history;
+the corrected world-frame terminal must still pass the unchanged global Pareto
+and lateral gates before its evidence class can improve.
