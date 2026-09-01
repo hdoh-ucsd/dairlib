@@ -312,6 +312,28 @@ EvaluateFullSamplingC3TerminalDescent(
   return receipt;
 }
 
+XarmFullSamplingC3NormalizedParetoDescentReceipt
+EvaluateFullSamplingC3NormalizedParetoDescent(
+    const Eigen::Vector3d& start_object_pose,
+    const Eigen::Vector3d& end_object_pose,
+    const Eigen::Vector3d& goal_object_pose,
+    double translation_tolerance,
+    double orientation_tolerance) {
+  if (!std::isfinite(translation_tolerance) ||
+      !std::isfinite(orientation_tolerance) ||
+      translation_tolerance <= 0.0 || orientation_tolerance <= 0.0) {
+    throw std::invalid_argument(
+        "normalized Pareto descent tolerances must be finite and positive");
+  }
+  XarmFullSamplingC3NormalizedParetoDescentReceipt receipt;
+  receipt.terminal = EvaluateFullSamplingC3TerminalDescent(
+      start_object_pose, end_object_pose, goal_object_pose, 0.0, 0.0);
+  receipt.normalized_magnitude =
+      receipt.terminal.translation_progress / translation_tolerance +
+      receipt.terminal.orientation_progress / orientation_tolerance;
+  return receipt;
+}
+
 XarmFullSamplingC3PostRecoveryReceipt
 EvaluateFullSamplingC3PostRecoveryProgress(
     const Eigen::Vector3d& start_object_pose,

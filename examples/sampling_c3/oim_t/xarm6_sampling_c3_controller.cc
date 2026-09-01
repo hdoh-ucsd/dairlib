@@ -4019,6 +4019,9 @@ int DoMain(int argc, char* argv[]) {
                   }
                   const int release_recovery_start_updates =
                       full_execution_updates;
+                  std::optional<
+                      XarmFullSamplingC3NormalizedParetoDescentReceipt>
+                          selected_cycle_recovery_prediction;
                   if (progress_lateral_rejected) {
                     live_execution_rejections.insert(
                         progress_plan.sample_name);
@@ -4294,9 +4297,29 @@ int DoMain(int argc, char* argv[]) {
                           const auto terminal =
                               candidate_terminal_pose(candidate);
                           if (!terminal.has_value()) return false;
-                          return EvaluateFullSamplingC3TerminalDescent(
+                          return EvaluateFullSamplingC3NormalizedParetoDescent(
                               progress_start_pose, *terminal,
-                              params.object.goal_pose, 0.0, 0.0).accepted;
+                              params.object.goal_pose,
+                              params.task.translation_tolerance,
+                              params.task.orientation_tolerance)
+                              .terminal.accepted;
+                        };
+                    auto cycle_task_descent_magnitude =
+                        [&](const auto& candidate) {
+                          const auto terminal =
+                              candidate_terminal_pose(candidate);
+                          if (!terminal.has_value()) {
+                            return -std::numeric_limits<double>::infinity();
+                          }
+                          const auto descent =
+                              EvaluateFullSamplingC3NormalizedParetoDescent(
+                                  progress_start_pose, *terminal,
+                                  params.object.goal_pose,
+                                  params.task.translation_tolerance,
+                                  params.task.orientation_tolerance);
+                          return descent.terminal.accepted
+                              ? descent.normalized_magnitude
+                              : -std::numeric_limits<double>::infinity();
                         };
                     auto select_live_cycle_candidate =
                         [&](const std::vector<
@@ -4372,6 +4395,13 @@ int DoMain(int argc, char* argv[]) {
                     for (const auto& candidate : cycle_buffer.successful) {
                       ranked_cycle_candidates.push_back(&candidate);
                     }
+                    std::stable_sort(
+                        ranked_cycle_candidates.begin(),
+                        ranked_cycle_candidates.end(),
+                        [&](const auto* a, const auto* b) {
+                          return cycle_task_descent_magnitude(*a) >
+                              cycle_task_descent_magnitude(*b);
+                        });
                     std::vector<const
                         XarmFullSamplingC3CandidateReceipt*>
                             ranked_cycle_contact_candidates;
@@ -4395,7 +4425,14 @@ int DoMain(int argc, char* argv[]) {
                     std::stable_sort(
                         ranked_cycle_contact_candidates.begin(),
                         ranked_cycle_contact_candidates.end(),
-                        [](const auto* a, const auto* b) {
+                        [&](const auto* a, const auto* b) {
+                          const double a_descent =
+                              cycle_task_descent_magnitude(*a);
+                          const double b_descent =
+                              cycle_task_descent_magnitude(*b);
+                          if (a_descent != b_descent) {
+                            return a_descent > b_descent;
+                          }
                           return a->solve.dynamic_rollout_cost <
                               b->solve.dynamic_rollout_cost;
                         });
@@ -4550,6 +4587,32 @@ int DoMain(int argc, char* argv[]) {
                               cycle_contact, cycle_attempt_pose, cycle_sample,
                               "cycle_recovery_contact", false, true, false,
                               true);
+                      if (cycle_contacted) {
+                        const auto predicted_terminal =
+                            candidate_terminal_pose(*cycle_candidate);
+                        if (predicted_terminal.has_value()) {
+                          selected_cycle_recovery_prediction =
+                              EvaluateFullSamplingC3NormalizedParetoDescent(
+                                  progress_start_pose, *predicted_terminal,
+                                  params.object.goal_pose,
+                                  params.task.translation_tolerance,
+                                  params.task.orientation_tolerance);
+                          std::cout <<
+                              "full_sampling_c3plus_cycle_recovery_"
+                              "predicted_descent=PASS sample="
+                                    << cycle_candidate->sample_name
+                                    << " normalized_magnitude="
+                                    << selected_cycle_recovery_prediction
+                                           ->normalized_magnitude
+                                    << " translation_progress_m="
+                                    << selected_cycle_recovery_prediction
+                                           ->terminal.translation_progress
+                                    << " orientation_progress_rad="
+                                    << selected_cycle_recovery_prediction
+                                           ->terminal.orientation_progress
+                                    << std::endl;
+                        }
+                      }
                       bool cycle_contact_loss_retry = false;
                       if (cycle_contacted) {
                         bool cycle_cleared = false;
@@ -4836,6 +4899,46 @@ int DoMain(int argc, char* argv[]) {
                       std::abs(WrappedAngleError(
                           params.object.goal_pose.z(),
                           post_recovery_pose.z()));
+                  if (selected_cycle_recovery_prediction.has_value()) {
+                    const auto measured_recovery_descent =
+                        EvaluateFullSamplingC3NormalizedParetoDescent(
+                            progress_start_pose, post_recovery_pose,
+                            params.object.goal_pose,
+                            params.task.translation_tolerance,
+                            params.task.orientation_tolerance);
+                    const bool prediction_sign_conformant =
+                        selected_cycle_recovery_prediction->terminal.accepted &&
+                        measured_recovery_descent.terminal.accepted;
+                    std::cout <<
+                        "full_sampling_c3plus_cycle_recovery_descent_"
+                        "conformance="
+                              << (prediction_sign_conformant ? "PASS" :
+                                  "FAIL")
+                              << " predicted_normalized_magnitude="
+                              << selected_cycle_recovery_prediction
+                                     ->normalized_magnitude
+                              << " measured_normalized_magnitude="
+                              << measured_recovery_descent
+                                     .normalized_magnitude
+                              << " normalized_residual="
+                              << measured_recovery_descent
+                                     .normalized_magnitude -
+                                  selected_cycle_recovery_prediction
+                                     ->normalized_magnitude
+                              << " predicted_translation_progress_m="
+                              << selected_cycle_recovery_prediction
+                                     ->terminal.translation_progress
+                              << " measured_translation_progress_m="
+                              << measured_recovery_descent.terminal
+                                     .translation_progress
+                              << " predicted_orientation_progress_rad="
+                              << selected_cycle_recovery_prediction
+                                     ->terminal.orientation_progress
+                              << " measured_orientation_progress_rad="
+                              << measured_recovery_descent.terminal
+                                     .orientation_progress
+                              << std::endl;
+                  }
                   std::cout <<
                       "full_sampling_c3plus_post_recovery_progress="
                             << (post_recovery_progress.accepted ? "PASS" :

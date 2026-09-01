@@ -153,6 +153,21 @@ EvaluateFullSamplingC3TerminalDescent(
     double minimum_translation_progress,
     double minimum_orientation_progress);
 
+struct XarmFullSamplingC3NormalizedParetoDescentReceipt {
+  XarmFullSamplingC3TerminalDescentReceipt terminal;
+  double normalized_magnitude{};
+};
+
+// Compare task descent across meters and radians without adding a new weight:
+// each component is normalized by its unchanged terminal tolerance.
+XarmFullSamplingC3NormalizedParetoDescentReceipt
+EvaluateFullSamplingC3NormalizedParetoDescent(
+    const Eigen::Vector3d& start_object_pose,
+    const Eigen::Vector3d& end_object_pose,
+    const Eigen::Vector3d& goal_object_pose,
+    double translation_tolerance,
+    double orientation_tolerance);
+
 struct XarmFullSamplingC3PostRecoveryReceipt {
   XarmFullSamplingC3TerminalDescentReceipt terminal;
   bool lateral_accepted{};

@@ -423,3 +423,10 @@ problem. Its candidates must be predicted nonregressive in both terminal
 translation and orientation before the existing polarity, live-IK, and capsule
 checks may authorize motion. This is a prediction-side safety condition only;
 the productive-cycle counter still consumes the measured post-recovery receipt.
+
+Within that admissible recovery set, predicted translation and orientation
+descent are normalized by their unchanged terminal tolerances and stable-ranked
+by the resulting dimensionless magnitude. The selected predicted receipt is
+retained through physical recovery and compared with the post-recovery pose.
+This comparison is evidence, not acceptance: physical Pareto descent remains
+the authority when the C3+ rollout overpredicts the measured response.

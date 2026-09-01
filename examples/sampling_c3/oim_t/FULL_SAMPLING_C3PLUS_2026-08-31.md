@@ -752,3 +752,37 @@ poorly balanced gains, so four cycles still leave the object far from both
 terminal tolerances. Gate 35 must rank task-preserving recovery candidates by
 predicted Pareto descent magnitude and compare that ordering with measured
 post-recovery descent, without weakening the physical acceptance gate.
+
+## Gate 35 — predicted Pareto-ranked recovery conformance
+
+Task-preserving recovery candidates are now stable-ranked by their predicted
+Pareto descent before live IK. Translation and orientation gains are divided
+by the unchanged 0.05 m and 0.10 rad terminal tolerances and summed; this gives
+a dimensionless ordering without introducing a new weight. Dynamic rollout
+cost remains the deterministic tie-breaker. Every physically engaged recovery
+candidate stores its selected prediction and compares it with the measured
+post-recovery pose.
+
+```text
+source commit:                    4de568ce
+worktree:                         dirty; Gate-35 implementation under test
+config SHA-256:                   d11cd65efbcf6ac7c814a0b690cc76f9135d27a9f607f6f10dc7d9b26051b990
+seed/settings/tolerances:         unchanged
+physical output:                  /root/push_anything_ADMM/results/xarm6_pareto_ranked_recovery_8000_RZ453L
+prediction receipts:              3
+prediction-sign conformance:      2 PASS / 1 FAIL
+post-recovery progress:           2 PASS / 1 FAIL
+largest normalized overprediction: 24.2769
+terminal translation error:       0.747945 m
+terminal orientation error:       2.36896 rad
+simulator terminal:               FAIL
+```
+
+Gate 35 passes because ranking and physical comparison are both executable and
+fail closed; it does not establish that raw predicted magnitude is a useful
+physical ranking. All three predictions were strongly overconfident. The third
+predicted `+0.385644 m / +2.17689 rad`, but measured `-0.0198602 m /
++0.560209 rad`, so physical translation regressed. Gate 36 must apply the
+existing measured-response conditioning to recovery candidates and rank the
+corrected terminal descent ahead of unseen raw predictions while retaining an
+exploration fall-through.

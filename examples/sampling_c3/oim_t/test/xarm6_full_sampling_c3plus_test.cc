@@ -261,6 +261,24 @@ TEST(XarmFullSamplingC3PlusTest, TerminalDescentRequiresParetoProgress) {
 }
 
 TEST(XarmFullSamplingC3PlusTest,
+     NormalizedParetoDescentUsesUnchangedTerminalTolerances) {
+  const Eigen::Vector3d start(0.0, 1.0, 1.0);
+  const Eigen::Vector3d goal(0.0, 0.0, 0.0);
+  const auto balanced = EvaluateFullSamplingC3NormalizedParetoDescent(
+      start, Eigen::Vector3d(0.0, 0.95, 0.9), goal, 0.05, 0.1);
+  EXPECT_TRUE(balanced.terminal.accepted);
+  EXPECT_NEAR(balanced.normalized_magnitude, 2.0, 1.0e-12);
+
+  const auto regressive = EvaluateFullSamplingC3NormalizedParetoDescent(
+      start, Eigen::Vector3d(0.0, 0.9, 1.1), goal, 0.05, 0.1);
+  EXPECT_FALSE(regressive.terminal.accepted);
+  EXPECT_NEAR(regressive.normalized_magnitude, 1.0, 1.0e-12);
+  EXPECT_THROW(EvaluateFullSamplingC3NormalizedParetoDescent(
+                   start, goal, goal, 0.0, 0.1),
+               std::invalid_argument);
+}
+
+TEST(XarmFullSamplingC3PlusTest,
      PostRecoveryProgressOwnsTheFinalMeasuredPose) {
   const Eigen::Vector3d start(0.381, 0.40, 0.0);
   const Eigen::Vector3d goal(0.381, -0.40, 3.141592653589793);
