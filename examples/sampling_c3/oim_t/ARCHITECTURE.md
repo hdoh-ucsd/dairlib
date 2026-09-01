@@ -469,3 +469,8 @@ Recovery proposal exhaustion has a deterministic seed-replenishment layer.
 Four additional perimeter/mesh seed pairs are generated only after the
 canonical set fails, and retry provenance is encoded in candidate names. No
 retry bypasses response quarantine or physical feasibility gates.
+
+Corrective C3+ objectives are receding-horizon reachable: lateral x remains at
+its global target, while y and yaw subgoals are bounded by their unchanged
+terminal tolerances. Global prediction and measured acceptance remain separate
+and continue to use the final open-table pose.

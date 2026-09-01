@@ -4390,12 +4390,24 @@ int DoMain(int argc, char* argv[]) {
                         cycle_recovery_planar_velocity.first;
                     cycle_recovery_params.object.start_linear_velocity_W =
                         cycle_recovery_planar_velocity.second;
-                    // Lateral correction is still enforced geometrically by
-                    // corrective x-force polarity, but its C3+ objective must
-                    // retain the global task. An x-only goal made y and yaw
-                    // regressions cost-free during recovery.
+                    // The five-knot recovery horizon cannot represent the
+                    // distant terminal task directly. Use the same unchanged-
+                    // tolerance receding subgoal as primary planning while
+                    // preserving the global x correction. Prediction and
+                    // physical acceptance below still use the global goal.
                     cycle_recovery_params.object.goal_pose =
-                        params.object.goal_pose;
+                        progress_end_pose;
+                    cycle_recovery_params.object.goal_pose.x() =
+                        params.object.goal_pose.x();
+                    cycle_recovery_params.object.goal_pose.y() += std::clamp(
+                        params.object.goal_pose.y() - progress_end_pose.y(),
+                        -params.task.translation_tolerance,
+                        params.task.translation_tolerance);
+                    cycle_recovery_params.object.goal_pose.z() += std::clamp(
+                        WrappedAngleError(params.object.goal_pose.z(),
+                                          progress_end_pose.z()),
+                        -params.task.orientation_tolerance,
+                        params.task.orientation_tolerance);
                     const auto cycle_exact =
                         RunXarmFullSamplingC3ExactTBatch(
                             cycle_recovery_params);

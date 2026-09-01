@@ -982,3 +982,27 @@ The five-knot recovery solve still targets the distant terminal goal directly,
 unlike primary receding planning. Gate 43 must use the same tolerance-bounded
 translation/yaw recovery subgoal while continuing to judge every prediction
 and measurement against the unchanged global goal.
+
+## Gate 43 — bounded receding recovery subgoal
+
+Recovery C3+ now uses the same horizon-reachable construction as primary
+planning: x retains the global lateral correction, while y and yaw advance by
+no more than the unchanged 0.05 m and 0.10 rad terminal tolerances. Prediction
+and physical receipts continue to evaluate the unchanged global goal.
+
+```text
+source commit:                    65de258f
+config/settings/tolerances:       unchanged
+physical output:                  /root/push_anything_ADMM/results/xarm6_bounded_recovery_subgoal_8000_aN7r8X
+bounded recovery live candidates: 3
+controlled-escape recoveries:     1
+honest productive cycles:         1
+late response quarantines:        34
+simulator terminal:               FAIL (0.756664 m / 3.06797 rad)
+```
+
+Gate 43 passes. The bounded objective restored repeated recovery availability
+without retry seeds. Later, two observations covered nearly every stem-left
+proposal because recovery contact matching reused the 50 mm task tolerance,
+which is comparable to the whole face. Gate 44 must localize recovery evidence
+to the existing pusher contact footprint rather than the terminal task scale.
