@@ -3060,11 +3060,27 @@ int DoMain(int argc, char* argv[]) {
                             params.controller.contact_activation_tolerance);
                     const int updates_before_release =
                         full_execution_updates;
-                    if (!execute_posture_waypoint(
+                    const bool outward_release = execute_posture_waypoint(
                             release_step, release_object_pose,
                             active_release_sample,
-                            "progress_cycle_release", true, false) ||
+                            "progress_cycle_release", true, false);
+                    if (!outward_release ||
                         full_execution_updates == updates_before_release) {
+                      Eigen::Vector3d vertical_clear = read_full_tip();
+                      vertical_clear.z() = std::max(
+                          vertical_clear.z(),
+                          CapsuleObjectClearanceHeight(params));
+                      cycle_entry_released = execute_posture_waypoint(
+                          vertical_clear, read_full_object_pose(),
+                          active_release_sample,
+                          "progress_cycle_vertical_release", true, false,
+                          false, false, true, false, true);
+                      std::cout <<
+                          "full_sampling_c3plus_receding_vertical_release="
+                                << (cycle_entry_released ? "PASS" : "FAIL")
+                                << " cycle=" << progress_cycle_count
+                                << " updates=" << full_execution_updates
+                                << std::endl;
                       break;
                     }
                   }
@@ -4508,6 +4524,7 @@ int DoMain(int argc, char* argv[]) {
                               << std::endl;
                   }
                   bool rejected_face_released = false;
+                  bool post_recovery_release_verified = false;
                   if ((productive_progress || progress_lateral_rejected ||
                        terminal_descent_rejected) &&
                       !progress_recovered &&
@@ -4568,6 +4585,9 @@ int DoMain(int argc, char* argv[]) {
                               << progress_end_pose.transpose()
                               << " updates=" << full_execution_updates
                               << std::endl;
+                    post_recovery_release_verified =
+                        terminal_descent_released ||
+                        rejected_face_released;
                     // A productive tail may be stopped by the unchanged
                     // lateral corridor.  Condition a new 72-sample solve on
                     // that measured rejection before accepting the cycle.
@@ -5303,8 +5323,8 @@ int DoMain(int argc, char* argv[]) {
                         }
                       }
                       bool cycle_response_retry = false;
+                      bool cycle_cleared = false;
                       if (cycle_contacted) {
-                        bool cycle_cleared = false;
                         bool cycle_crossing_rejected = false;
                         bool cycle_contact_lost_rejected = false;
                         bool cycle_wrong_polarity_rejected = false;
@@ -5413,11 +5433,30 @@ int DoMain(int argc, char* argv[]) {
                                             .contact_activation_tolerance);
                             const int updates_before_clear =
                                 full_execution_updates;
-                            if (!execute_posture_waypoint(
+                            const bool outward_clear =
+                                execute_posture_waypoint(
                                     clear_step, measured_object, cycle_sample,
-                                    "cycle_recovery_clear", true, false) ||
+                                    "cycle_recovery_clear", true, false);
+                            if (!outward_clear ||
                                 full_execution_updates ==
                                     updates_before_clear) {
+                              Eigen::Vector3d vertical_clear =
+                                  read_full_tip();
+                              vertical_clear.z() = std::max(
+                                  vertical_clear.z(),
+                                  CapsuleObjectClearanceHeight(params));
+                              cycle_cleared = execute_posture_waypoint(
+                                  vertical_clear,
+                                  read_full_object_pose(), cycle_sample,
+                                  "cycle_recovery_vertical_clear", true,
+                                  false, false, false, true, false, true);
+                              std::cout <<
+                                  "full_sampling_c3plus_cycle_recovery_"
+                                  "vertical_clear="
+                                        << (cycle_cleared ? "PASS" : "FAIL")
+                                        << " updates="
+                                        << full_execution_updates
+                                        << std::endl;
                               break;
                             }
                             continue;
@@ -5472,6 +5511,9 @@ int DoMain(int argc, char* argv[]) {
                                 cycle_crossing_rejected,
                                 cycle_wrong_polarity_rejected,
                                 cycle_contact_lost_rejected);
+                      }
+                      if (cycle_contacted) {
+                        post_recovery_release_verified = cycle_cleared;
                       }
                       if (cycle_contacted && !cycle_response_retry) break;
 
@@ -5725,8 +5767,7 @@ int DoMain(int argc, char* argv[]) {
                           post_recovery_progress.accepted,
                           post_recovery_progress.lateral_accepted,
                           bounded_replanning_transaction.accepted,
-                          progress_recovered || rejected_face_released ||
-                              terminal_descent_released);
+                          post_recovery_release_verified);
                   std::cout << "full_sampling_c3plus_task_progress_cycle="
                             << (full_task_progress_cycle ? "PASS" : "FAIL")
                             << " y_progress_m="

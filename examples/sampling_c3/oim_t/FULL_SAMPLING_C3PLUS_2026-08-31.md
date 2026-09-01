@@ -1667,3 +1667,29 @@ cycles plus one no-credit state. It also exposes two coupled release defects:
 the continuation receipt can inherit stale clearance from the departed face,
 and an outward position-only release has no vertical escape fallback when its
 swept capsule is blocked. Gates 70 and 71 address those independently.
+
+## Gates 70–71 — current-face release provenance and vertical escape
+
+Gate 70 makes the latest physically engaged face own the clearance receipt;
+clearance from a departed face can no longer authorize bounded continuation.
+Gate 71 adds a measurement-conditioned vertical release to the geometry-
+derived object-clearance height when an outward whole-capsule sweep is blocked.
+It retains position-only IK, bounded stepping, and whole-capsule/table checks.
+
+```text
+source commit:                    46a39965
+config/settings/tolerances:       unchanged
+focused tests / live build:       PASS / PASS
+physical output:                  /root/push_anything_ADMM/results/xarm6_current_face_vertical_release_40000_hSLmOe
+strict productive cycles:         6
+stale-face continuations:         0
+vertical escape activations:      0 (activation pending)
+response retries:                 5
+simulator terminal:               FAIL (0.671910 m / 2.42398 rad)
+```
+
+Gate 70 passes its fail-closed provenance objective; Gate 71 remains
+activation-pending. The response retries reveal Gate 72: all five alternatives
+were planned at the original rejected pose while measured x drift grew to
+73 mm. Recovery must be rebuilt from the latest released measurement after
+each physical response invalidation.

@@ -613,3 +613,9 @@ The 2 mm lateral reserve remains the authority for productive credit. A
 released pose between that reserve and the unchanged 5 mm corridor may only
 continue as a positive bounded transaction, with no cycle count or progress-
 rate receipt.
+
+Release provenance belongs to the most recently engaged face. A previous
+face's clearance cannot authorize continuation after a new contact. If its
+outward swept capsule is blocked, release may switch to a measured-vertical
+escape at the geometry-derived object-clearance height, never through the
+object or table.
