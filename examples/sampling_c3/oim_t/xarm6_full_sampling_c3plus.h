@@ -253,7 +253,8 @@ struct XarmFullSamplingC3ResponseConditioningReceipt {
   int compatible_observations{};
   int lateral_rejections{};
   int terminal_regressions{};
-  // 0: all local observations compatible, 1: unseen, 2: incompatible.
+  // 0: replicated local observations compatible, 1: insufficient evidence,
+  // 2: replicated observations include incompatible physical response.
   // This discrete class intentionally avoids inventing a scalar tuning weight.
   int ranking_class{1};
   bool corrected_terminal_accepted{};
@@ -267,6 +268,10 @@ struct XarmFullSamplingC3ResponseConditioningReceipt {
   double observed_progress_gain{};
   double calibrated_normalized_magnitude{};
 };
+
+// One contact is an observation, not a repeatable response class. Require one
+// replication before physical evidence changes candidate precedence.
+inline constexpr int kMinimumResponseClassObservations = 2;
 
 // Corrects one candidate's predicted terminal displacement with accumulated
 // physical model residuals from the same pose/contact neighborhood. Existing

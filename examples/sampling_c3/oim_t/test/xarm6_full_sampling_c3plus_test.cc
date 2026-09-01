@@ -412,7 +412,7 @@ TEST(XarmFullSamplingC3PlusTest,
       EvaluateFullSamplingC3MeasuredResponseConditioning(
           start, predicted, point, normal, goal, {compatible}, 0.05, 0.10,
           0.01, 0.002, 0.002);
-  EXPECT_EQ(preferred.ranking_class, 0);
+  EXPECT_EQ(preferred.ranking_class, 1);
   EXPECT_EQ(preferred.compatible_observations, 1);
   EXPECT_TRUE(preferred.corrected_terminal_accepted);
   EXPECT_TRUE(preferred.corrected_lateral_accepted);
@@ -420,6 +420,12 @@ TEST(XarmFullSamplingC3PlusTest,
       compatible.measured_terminal_object_pose));
   EXPECT_NEAR(preferred.observed_progress_gain, 1.5, 1.0e-12);
   EXPECT_NEAR(preferred.calibrated_normalized_magnitude, 0.9, 1.0e-12);
+  const auto replicated_preferred =
+      EvaluateFullSamplingC3MeasuredResponseConditioning(
+          start, predicted, point, normal, goal,
+          {compatible, compatible}, 0.05, 0.10, 0.01, 0.002, 0.002);
+  EXPECT_EQ(replicated_preferred.ranking_class, 0);
+  EXPECT_EQ(replicated_preferred.compatible_observations, 2);
 
   XarmFullSamplingC3MeasuredResponse incompatible = compatible;
   incompatible.measured_terminal_object_pose =
@@ -429,11 +435,16 @@ TEST(XarmFullSamplingC3PlusTest,
       EvaluateFullSamplingC3MeasuredResponseConditioning(
           start, predicted, point, normal, goal, {incompatible}, 0.05, 0.10,
           0.01, 0.002, 0.002);
-  EXPECT_EQ(demoted.ranking_class, 2);
+  EXPECT_EQ(demoted.ranking_class, 1);
   EXPECT_EQ(demoted.lateral_rejections, 1);
   EXPECT_EQ(demoted.terminal_regressions, 1);
   EXPECT_FALSE(demoted.corrected_terminal_accepted);
   EXPECT_FALSE(demoted.corrected_lateral_accepted);
+  const auto replicated_demoted =
+      EvaluateFullSamplingC3MeasuredResponseConditioning(
+          start, predicted, point, normal, goal,
+          {incompatible, incompatible}, 0.05, 0.10, 0.01, 0.002, 0.002);
+  EXPECT_EQ(replicated_demoted.ranking_class, 2);
 
   incompatible.start_object_pose.y() = 0.2;
   const auto outside_neighborhood =
@@ -464,10 +475,16 @@ TEST(XarmFullSamplingC3PlusTest,
           observation.sample_normal_O, goal, {observation}, 0.05, 0.1,
           0.05, 0.001, 0.01);
   EXPECT_EQ(receipt.matching_observations, 1);
-  EXPECT_EQ(receipt.ranking_class, 0);
+  EXPECT_EQ(receipt.ranking_class, 1);
   EXPECT_TRUE(receipt.corrected_terminal_accepted);
   EXPECT_TRUE(receipt.corrected_terminal_object_pose.isApprox(
       Eigen::Vector3d(0.03, 0.0, M_PI_2), 1.0e-12));
+  const auto replicated_receipt =
+      EvaluateFullSamplingC3EquivariantResponseConditioning(
+          start, predicted, observation.sample_point_O,
+          observation.sample_normal_O, goal, {observation, observation},
+          0.05, 0.1, 0.05, 0.001, 0.01);
+  EXPECT_EQ(replicated_receipt.ranking_class, 0);
 }
 
 TEST(XarmFullSamplingC3PlusTest, PlannerModesAreExplicit) {

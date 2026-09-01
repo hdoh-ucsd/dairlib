@@ -593,3 +593,8 @@ Recovery candidate admission composes two independent receipts: measured
 corridor restoration and positive tolerance-normalized terminal component
 transaction. Lateral error reduction cannot numerically compensate for a net
 regression in the actual translation-and-yaw terminal objective.
+
+Measured response evidence changes discrete candidate precedence only after a
+matching observation is replicated. The first sample remains fully logged and
+contributes a provisional residual, but cannot alone prefer or quarantine an
+entire equivalent contact neighborhood.

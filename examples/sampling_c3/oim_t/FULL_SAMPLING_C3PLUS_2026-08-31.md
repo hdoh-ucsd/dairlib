@@ -1567,3 +1567,27 @@ recovery branch. One failed measured response classified every geometrically
 equivalent candidate as incompatible; the primary resample exhausted despite
 115 live-IK-executable candidates. Gate 66 must require replicated response
 evidence before either preference or quarantine changes an evidence class.
+
+## Gate 66 — replicated response evidence classes
+
+A single measured contact remains provisional evidence class 1. Two matching
+observations are now required before a class becomes preferred (0) or
+quarantined (2). Residual and gain diagnostics are still computed immediately;
+only candidate precedence waits for replication.
+
+```text
+source commit:                    68659f8c
+config/settings/tolerances:       unchanged
+focused tests / live build:       PASS / PASS
+physical output:                  /root/push_anything_ADMM/results/xarm6_replicated_response_evidence_40000_723bPe
+measured productive cycles:       3
+replicated quarantine observed:   yes (2 matching observations)
+updates used:                     8348
+simulator terminal:               FAIL (0.761556 m / 2.59308 rad)
+```
+
+Gate 66 removes the one-observation exhaustion and activates replicated
+quarantine. The next failure crossed the x corridor during contact, was safely
+released, but did not retry because only contact-loss release currently enters
+the fallback loop. Gate 67 must treat released crossing and wrong-polarity
+responses as retryable candidate invalidations too.

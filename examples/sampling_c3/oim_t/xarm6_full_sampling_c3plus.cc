@@ -604,7 +604,7 @@ EvaluateFullSamplingC3MeasuredResponseConditioning(
             orientation_neighborhood).normalized_magnitude *
         receipt.observed_progress_gain;
   }
-  if (receipt.matching_observations == 0) {
+  if (receipt.matching_observations < kMinimumResponseClassObservations) {
     receipt.ranking_class = 1;
   } else if (receipt.compatible_observations ==
                  receipt.matching_observations &&
@@ -724,7 +724,7 @@ EvaluateFullSamplingC3EquivariantResponseConditioning(
       receipt.corrected_terminal_object_pose.x() - goal_object_pose.x());
   receipt.corrected_lateral_accepted =
       receipt.corrected_lateral_error <= lateral_drift_tolerance;
-  if (receipt.matching_observations == 0) {
+  if (receipt.matching_observations < kMinimumResponseClassObservations) {
     receipt.ranking_class = 1;
   } else if (receipt.corrected_terminal_accepted &&
              receipt.corrected_lateral_accepted) {
