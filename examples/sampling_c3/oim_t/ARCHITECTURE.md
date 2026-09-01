@@ -485,3 +485,9 @@ fail: the selected candidate's collision-validated overhead x-y point at the
 measured lift height. It does not bypass IK or swept whole-capsule checks. A
 failed anchor leaves the candidate invalidated and preserves the terminal
 receipt.
+
+When every elevated anchor is posture-IK infeasible, preview recovery may
+de-elevate position-only at the measured clear x-y point to
+`CapsuleObjectClearanceHeight`. The descent and subsequent in-place
+verticalization each retain interpolated whole-capsule checks; this is a
+sequencing fallback, not a new height parameter or collision tolerance.

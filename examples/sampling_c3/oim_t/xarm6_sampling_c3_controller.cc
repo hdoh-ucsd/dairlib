@@ -3964,6 +3964,7 @@ int DoMain(int argc, char* argv[]) {
                     bool neutral_anchor_reacquired = false;
                     bool reachable_anchor_fallback = false;
                     bool overhead_anchor_fallback = false;
+                    bool clearance_height_fallback = false;
                     if (progress_fallback_released &&
                         full_execution_updates <
                             FLAGS_full_execution_steps) {
@@ -4024,6 +4025,35 @@ int DoMain(int argc, char* argv[]) {
                         neutral_anchor_reacquired =
                             overhead_anchor_fallback;
                       }
+                      if (recovery_lifted &&
+                          !neutral_anchor_reacquired) {
+                        // The measured lift may be much higher than required
+                        // after a failed long traverse, leaving a joint at its
+                        // limit and making every vertical-axis IK seed
+                        // infeasible. First descend position-only, outside the
+                        // object footprint, to the exact capsule/object
+                        // clearance height. Both the descent and subsequent
+                        // in-place verticalization retain swept capsule checks.
+                        Eigen::Vector3d clearance_anchor = read_full_tip();
+                        clearance_anchor.z() =
+                            CapsuleObjectClearanceHeight(params);
+                        const bool clearance_height_reached =
+                            execute_posture_waypoint(
+                                clearance_anchor,
+                                read_full_object_pose(), progress_sample,
+                                "progress_preview_recovery_clearance_descent",
+                                true, false, false, false, false, false);
+                        clearance_height_fallback =
+                            clearance_height_reached &&
+                            execute_posture_waypoint(
+                                read_full_tip(), read_full_object_pose(),
+                                progress_sample,
+                                "progress_preview_recovery_clearance_"
+                                "verticalize_anchor",
+                                false, false, false, false, false, false);
+                        neutral_anchor_reacquired =
+                            clearance_height_fallback;
+                      }
                     }
                     const bool terminal_receipt_preserved =
                         measured_response_history.size() ==
@@ -4060,6 +4090,8 @@ int DoMain(int argc, char* argv[]) {
                               << reachable_anchor_fallback
                               << " overhead_anchor_fallback="
                               << overhead_anchor_fallback
+                              << " clearance_height_fallback="
+                              << clearance_height_fallback
                               << " terminal_receipt_preserved="
                               << conformance.terminal_receipt_preserved
                               << " replanning_allowed="

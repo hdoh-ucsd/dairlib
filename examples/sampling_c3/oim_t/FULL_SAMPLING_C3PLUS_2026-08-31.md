@@ -1054,3 +1054,28 @@ geometrically distinct anchors all fail at the same elevated height while the
 second arm joint is at its limit. Gate 46 must perform a collision-checked
 position-only descent to the existing geometric capsule-clearance height, then
 retry verticalization. This changes recovery sequencing, not configuration.
+
+## Gate 46 — clearance-height de-elevation
+
+If all elevated verticalization anchors fail, preview recovery now descends
+position-only at its already-clear x-y point to the exact geometric
+capsule/object clearance height. Only after that swept-capsule-checked descent
+does it request in-place vertical posture IK; failure still invalidates the
+candidate and preserves terminal evidence.
+
+```text
+source commit:                    b00c0453
+config/settings/tolerances:       unchanged
+physical output:                  /root/push_anything_ADMM/results/xarm6_clearance_height_recovery_8000_Q6LHxV
+clearance-height branch:          not reached
+ordinary neutral recoveries:      3 PASS
+honest productive cycles:         2
+measured budget defer:            2138 remaining / 2241 required
+simulator terminal:               FAIL (0.749225 m / 2.92554 rad)
+```
+
+Gate 46 is implemented and tested but remains activation-pending. The rollout
+did expose a bookkeeping defect: entering the next loop iteration clears the
+last productive-cycle boolean before a safe measured-budget defer. Gate 47
+must retain cumulative productive-handoff provenance while keeping the global
+terminal tolerance as the only task-success authority.
