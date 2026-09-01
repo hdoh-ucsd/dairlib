@@ -561,3 +561,8 @@ Periodic IK representation is canonicalized without changing kinematics. For
 declared full-revolution joints, the in-limit `q + 2*pi*k` nearest measured q
 is selected before the normal bounded step; narrower nonperiodic joints are
 untouched.
+
+Extended-rollout evidence now includes twelve consecutive productive cycles
+plus response-conditioned retries. It distinguishes productive provenance from
+replanning viability: a recovered transaction with bounded component debt may
+be a valid next measured state even though strict Pareto credit must fail.

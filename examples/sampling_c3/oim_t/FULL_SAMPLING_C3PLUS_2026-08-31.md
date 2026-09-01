@@ -1389,3 +1389,28 @@ simulator terminal:               FAIL (0.729523 m / 2.91010 rad)
 Gate 58 passes regression and the Gate-57 saturation did not recur, though a
 raw equivalent-turn substitution was not needed in this trace. Gate 59 repeats
 the separately labeled 40,000-update attempt to identify the next blocker.
+
+## Gate 59 — sustained extended rollout
+
+The second extended run completed twelve strictly Pareto productive cycles and
+continued through repeated contact loss, wrong-polarity response, candidate
+rejection, and corrective retry. The periodic joint winding did not recur. It
+reduced translation error by 0.245 m and yaw error by 1.287 rad before stopping
+at a nonproductive but safely recovered transaction.
+
+```text
+source commit:                    43da2ab9
+config/settings/tolerances:       unchanged
+physical output:                  /root/push_anything_ADMM/results/xarm6_terminal_attempt2_40000_OAXQZo
+requested updates / used:         40000 / 26985
+measured productive cycles:       12
+measured q1 range:                [-0.248928, 0.892447] rad
+measured q2 range:                [-1.760778, 0.752782] rad
+simulator terminal:               FAIL (0.554551 m / 1.85494 rad)
+```
+
+The final recovery restored x and improved translation by 0.029856 m while
+regressing orientation by 0.013573 rad. Strict measured productivity correctly
+failed, but its positive tolerance-normalized net descent and bounded debt made
+the released state safe for another solve. Gate 60 must allow this state to
+continue replanning without granting productive-cycle credit.
