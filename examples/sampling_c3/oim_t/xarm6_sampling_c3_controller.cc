@@ -4507,6 +4507,7 @@ int DoMain(int argc, char* argv[]) {
                               << " updates=" << full_execution_updates
                               << std::endl;
                   }
+                  bool rejected_face_released = false;
                   if ((productive_progress || progress_lateral_rejected ||
                        terminal_descent_rejected) &&
                       !progress_recovered &&
@@ -4516,7 +4517,6 @@ int DoMain(int argc, char* argv[]) {
                     // the pusher is still on the progress face; replaying a
                     // corrective candidate from that interpenetrating start
                     // would reject every otherwise valid lift at waypoint 0.
-                    bool rejected_face_released = false;
                     while (!rejected_face_released &&
                            full_execution_updates <
                                FLAGS_full_execution_steps) {
@@ -5719,6 +5719,14 @@ int DoMain(int argc, char* argv[]) {
                       (progress_lateral_rejected ||
                        terminal_descent_released ||
                        bounded_replanning_transaction.accepted);
+                  const bool bounded_corridor_continuation =
+                      ShouldContinueXarmFullSamplingC3BoundedCorridorState(
+                          full_task_progress_cycle,
+                          post_recovery_progress.accepted,
+                          post_recovery_progress.lateral_accepted,
+                          bounded_replanning_transaction.accepted,
+                          progress_recovered || rejected_face_released ||
+                              terminal_descent_released);
                   std::cout << "full_sampling_c3plus_task_progress_cycle="
                             << (full_task_progress_cycle ? "PASS" : "FAIL")
                             << " y_progress_m="
@@ -5789,13 +5797,15 @@ int DoMain(int argc, char* argv[]) {
                               << progress_end_pose.transpose()
                               << " updates=" << full_execution_updates
                               << std::endl;
-                  } else if (recovery_only_continuation) {
+                  } else if (recovery_only_continuation ||
+                             bounded_corridor_continuation) {
                     // A wrong-polarity response is not scientific progress,
                     // but once its corrective face has restored the lateral
                     // corridor and cleared contact it is a valid state from
                     // which to re-solve. Do not terminate the receding loop.
                     corrective_lateral_recovery = true;
-                    if (terminal_descent_released) {
+                    if (terminal_descent_released ||
+                        rejected_face_released) {
                       active_release_name = progress_plan.sample_name;
                       active_release_sample = ContactSample{
                           progress_plan.sample_point_O,
@@ -5808,6 +5818,8 @@ int DoMain(int argc, char* argv[]) {
                               << progress_cycle_count
                               << " bounded_component_transaction="
                               << bounded_replanning_transaction.accepted
+                              << " bounded_corridor="
+                              << bounded_corridor_continuation
                               << " normalized_magnitude="
                               << bounded_replanning_transaction
                                      .normalized_magnitude

@@ -1642,3 +1642,28 @@ continuation gap: a released pose inside the unchanged 5 mm lateral corridor
 and with strict positive task progress missed only the 2 mm productive-credit
 reserve. Gate 69 must allow bounded replanning from that pose without granting
 productive credit or weakening the reserve.
+
+## Gate 69 — bounded corridor continuation without credit
+
+A released pose inside the unchanged 5 mm lateral corridor can now seed the
+next solve when its bounded component transaction is positive, even if it
+misses the stricter 2 mm productive-credit reserve. The branch never increments
+cycle count or measured progress history.
+
+```text
+source commit:                    59843f40
+config/settings/tolerances:       unchanged
+focused tests / live build:       PASS / PASS
+physical output:                  /root/push_anything_ADMM/results/xarm6_bounded_corridor_continuation_40000_xJvzt5
+strict productive cycles:         12
+bounded continuation activations: 1
+activation normalized magnitude:  0.852739
+updates used:                     20059
+simulator terminal:               FAIL (0.607173 m / 1.79965 rad)
+```
+
+Gate 69 passes activation and extends the best rollout to twelve credited
+cycles plus one no-credit state. It also exposes two coupled release defects:
+the continuation receipt can inherit stale clearance from the departed face,
+and an outward position-only release has no vertical escape fallback when its
+swept capsule is blocked. Gates 70 and 71 address those independently.

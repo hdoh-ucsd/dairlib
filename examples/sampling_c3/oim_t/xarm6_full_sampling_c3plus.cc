@@ -271,6 +271,15 @@ bool ShouldRetryXarmFullSamplingC3RecoveryResponse(
       (crossed_goal || wrong_polarity || contact_lost);
 }
 
+bool ShouldContinueXarmFullSamplingC3BoundedCorridorState(
+    bool productive_cycle_credited, bool post_recovery_task_accepted,
+    bool lateral_corridor_accepted, bool component_transaction_accepted,
+    bool release_verified) {
+  return !productive_cycle_credited && post_recovery_task_accepted &&
+      lateral_corridor_accepted && component_transaction_accepted &&
+      release_verified;
+}
+
 Eigen::VectorXd CanonicalizeXarmPeriodicIkSolutionNearestMeasured(
     const Eigen::VectorXd& solution, const Eigen::VectorXd& measured,
     const Eigen::VectorXd& lower_limits,

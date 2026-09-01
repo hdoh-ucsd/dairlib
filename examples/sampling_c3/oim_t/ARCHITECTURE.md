@@ -608,3 +608,8 @@ Nonlinear vertical posture solving may retry from the canonical home seed in
 verticalize, descend, and contact phases. The returned solution receives the
 same nearest-measured periodic representation, bounded step, measured progress
 check, and swept whole-capsule clearance as a measured-seed solution.
+
+The 2 mm lateral reserve remains the authority for productive credit. A
+released pose between that reserve and the unchanged 5 mm corridor may only
+continue as a positive bounded transaction, with no cycle count or progress-
+rate receipt.

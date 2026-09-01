@@ -142,6 +142,14 @@ bool ShouldRetryXarmFullSamplingC3RecoveryResponse(
     bool release_cleared, bool lateral_recovered, bool crossed_goal,
     bool wrong_polarity, bool contact_lost);
 
+// A released pose that passes the global lateral corridor and bounded task
+// transaction may seed another solve even when it misses the stricter reserve
+// required for productive-cycle credit.
+bool ShouldContinueXarmFullSamplingC3BoundedCorridorState(
+    bool productive_cycle_credited, bool post_recovery_task_accepted,
+    bool lateral_corridor_accepted, bool component_transaction_accepted,
+    bool release_verified);
+
 // Revolute IK may return q +/- 2*pi at identical Cartesian posture. For joints
 // whose declared range contains a complete revolution, select the equivalent
 // in-limit representation nearest measured q before forming a bounded step.

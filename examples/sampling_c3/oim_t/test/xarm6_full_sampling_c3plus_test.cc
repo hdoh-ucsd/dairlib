@@ -239,6 +239,18 @@ TEST(XarmFullSamplingC3PlusTest,
 }
 
 TEST(XarmFullSamplingC3PlusTest,
+     BoundedCorridorStateContinuesWithoutProductiveCredit) {
+  EXPECT_TRUE(ShouldContinueXarmFullSamplingC3BoundedCorridorState(
+      false, true, true, true, true));
+  EXPECT_FALSE(ShouldContinueXarmFullSamplingC3BoundedCorridorState(
+      true, true, true, true, true));
+  EXPECT_FALSE(ShouldContinueXarmFullSamplingC3BoundedCorridorState(
+      false, true, true, true, false));
+  EXPECT_FALSE(ShouldContinueXarmFullSamplingC3BoundedCorridorState(
+      false, true, false, true, true));
+}
+
+TEST(XarmFullSamplingC3PlusTest,
      PeriodicIkSolutionUsesEquivalentBranchNearestMeasuredState) {
   const double pi = std::acos(-1.0);
   Eigen::VectorXd solution(3), measured(3), lower(3), upper(3);
