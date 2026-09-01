@@ -2202,13 +2202,18 @@ int DoMain(int argc, char* argv[]) {
                                             bool contact_engagement = false,
                                             bool vertical_release = false,
                                             bool enforce_preview_conformance =
+                                                false,
+                                            bool measured_vertical_translation =
                                                 false) {
           refresh_full_measurements(phase);
           Eigen::Vector3d current_tip = read_full_tip();
           const double phase_entry_waypoint_error =
-              (waypoint - current_tip).norm();
+              measured_vertical_translation
+                  ? std::abs(waypoint.z() - current_tip.z())
+                  : (waypoint - current_tip).norm();
           auto posture_waypoint_reached = [&]() {
-            const double waypoint_error = vertical_release
+            const double waypoint_error =
+                (vertical_release || measured_vertical_translation)
                 ? std::abs(waypoint.z() - current_tip.z())
                 : (waypoint - current_tip).norm();
             const bool settled = IsFullSamplingC3WaypointSettled(
@@ -2235,11 +2240,15 @@ int DoMain(int argc, char* argv[]) {
                       params.controller.task_space_plan_step_limit,
                       params.controller.minimum_contact_normal_step)
                 : params.controller.task_space_plan_step_limit;
-            if (delta.norm() > task_step_limit) {
+            Eigen::Vector3d command_tip = current_tip + delta;
+            if (measured_vertical_translation) {
+              command_tip = BuildMeasuredVerticalTranslationSubtarget(
+                  current_tip, waypoint.z(), task_step_limit);
+            } else if (delta.norm() > task_step_limit) {
               delta *= task_step_limit /
                   delta.norm();
+              command_tip = current_tip + delta;
             }
-            Eigen::Vector3d command_tip = current_tip + delta;
             if (vertical_release && command_tip.z() > current_tip.z()) {
               // Tracking drift after a low failed approach must not turn a
               // nominal lift into an inward scrape along the rejected face.
@@ -2439,7 +2448,9 @@ int DoMain(int argc, char* argv[]) {
             ++full_execution_updates;
             ++commanded_subtargets;
             const double measured_waypoint_error =
-                (waypoint - current_tip).norm();
+                measured_vertical_translation
+                    ? std::abs(waypoint.z() - current_tip.z())
+                    : (waypoint - current_tip).norm();
             if (enforce_preview_conformance &&
                 !IsFullSamplingC3WaypointExecutionConformant(
                     phase_entry_waypoint_error, measured_waypoint_error,
@@ -2484,6 +2495,8 @@ int DoMain(int argc, char* argv[]) {
                     << " settle_drift_m="
                     << read_full_tip_speed() *
                            params.task.planning_time_step
+                    << " measured_vertical_translation="
+                    << measured_vertical_translation
                     << std::endl;
           return reached;
         };
@@ -4069,7 +4082,7 @@ int DoMain(int argc, char* argv[]) {
                                 clearance_anchor,
                                 read_full_object_pose(), progress_sample,
                                 "progress_preview_recovery_clearance_descent",
-                                true, false, false, false, false, false);
+                                true, false, false, false, false, false, true);
                         clearance_height_fallback =
                             clearance_height_reached &&
                             execute_posture_waypoint(

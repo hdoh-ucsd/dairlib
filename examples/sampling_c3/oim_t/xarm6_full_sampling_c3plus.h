@@ -122,6 +122,14 @@ bool IsFullSamplingC3WaypointExecutionConformant(
     double phase_entry_waypoint_error, double measured_waypoint_error,
     double contact_activation_tolerance);
 
+// Form a measurement-conditioned vertical translation command. The caller's
+// waypoint contributes only its z coordinate; x-y is latched from the latest
+// measured tip so a measurement refresh cannot create an unintended diagonal
+// recovery command.
+Eigen::Vector3d BuildMeasuredVerticalTranslationSubtarget(
+    const Eigen::Vector3d& measured_tip, double waypoint_z,
+    double task_space_step_limit);
+
 // A physical waypoint is a safe handoff only when it is geometrically reached
 // and its measured tip motion cannot leave the existing activation ball over
 // one unchanged planning interval.

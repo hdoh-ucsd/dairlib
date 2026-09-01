@@ -1207,3 +1207,30 @@ activated Gate 46's de-elevation branch. Measurement refresh moved the tip x-y
 after its waypoint was formed, turning a vertical descent into a diagonal
 command that failed position-only IK. Gate 52 must latch x-y from the refreshed
 measurement within the phase while retaining collision checks.
+
+## Gate 52 — measurement-conditioned vertical de-elevation
+
+Recovery de-elevation now treats the stored clearance waypoint as a height,
+not a stale Cartesian point. Each substep latches x-y from the newest measured
+tip and clamps only the z displacement by the unchanged task-space step limit.
+Completion and preview-conformance errors are likewise one-dimensional for
+this explicitly vertical phase. Position-only IK and every interpolated
+whole-capsule/table clearance check remain mandatory.
+
+```text
+source commit:                    bb0e0c5f
+config/settings/tolerances:       unchanged
+focused tests:                    PASS
+live controller build:            PASS
+physical output:                  /root/push_anything_ADMM/results/xarm6_measured_vertical_deelevation_8000_slsgwJ
+physical branch activations:      0 (activation pending)
+productive cycles:                1
+simulator terminal:               FAIL (0.788526 m / 2.95698 rad)
+```
+
+Gate 52 is implemented but its physical activation proof remains pending; the
+rollout reacquired the fixed neutral anchor instead. The next observed blocker
+is deterministic: all available lateral-recovery candidates restored the
+unchanged x corridor but predicted 0.00288716 m of complete-cycle translation
+debt. Gate 53 must represent bounded recovery debt explicitly while retaining
+separate measured productive-cycle and global terminal acceptance.

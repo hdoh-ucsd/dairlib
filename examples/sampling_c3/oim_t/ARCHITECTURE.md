@@ -522,3 +522,9 @@ It combines the maximum observed productive progress in each task component
 with the minimum observed complete-cycle update cost to emit a lower bound on
 remaining cycles and updates. It never changes admission, benchmark budget, or
 the global terminal acceptance gate.
+
+Clearance-height de-elevation is measurement-conditioned. Its target owns only
+z: x-y is relatched from measured tip state on every command substep, so an LCM
+refresh cannot convert a vertical recovery into an unpreviewed diagonal move.
+The existing step limit, position-only IK, and swept whole-capsule checks are
+unchanged.

@@ -245,6 +245,21 @@ bool IsFullSamplingC3WaypointExecutionConformant(
       phase_entry_waypoint_error + contact_activation_tolerance;
 }
 
+Eigen::Vector3d BuildMeasuredVerticalTranslationSubtarget(
+    const Eigen::Vector3d& measured_tip, double waypoint_z,
+    double task_space_step_limit) {
+  if (!measured_tip.allFinite() || !std::isfinite(waypoint_z) ||
+      !std::isfinite(task_space_step_limit) || task_space_step_limit <= 0.0) {
+    throw std::invalid_argument(
+        "measured vertical translation inputs are invalid");
+  }
+  Eigen::Vector3d command = measured_tip;
+  command.z() += std::clamp(
+      waypoint_z - measured_tip.z(), -task_space_step_limit,
+      task_space_step_limit);
+  return command;
+}
+
 bool IsFullSamplingC3WaypointSettled(
     double waypoint_error, double measured_tip_speed,
     double planning_time_step, double contact_activation_tolerance) {

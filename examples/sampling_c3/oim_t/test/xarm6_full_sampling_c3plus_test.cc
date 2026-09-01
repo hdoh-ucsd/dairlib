@@ -205,6 +205,25 @@ TEST(XarmFullSamplingC3PlusTest,
 }
 
 TEST(XarmFullSamplingC3PlusTest,
+     MeasuredVerticalSubtargetRejectsStaleLateralCoordinates) {
+  const Eigen::Vector3d measured_tip(-0.13, 0.12, 0.61);
+  const Eigen::Vector3d down = BuildMeasuredVerticalTranslationSubtarget(
+      measured_tip, 0.55, 0.01);
+  EXPECT_EQ(down.x(), measured_tip.x());
+  EXPECT_EQ(down.y(), measured_tip.y());
+  EXPECT_DOUBLE_EQ(down.z(), 0.60);
+
+  const Eigen::Vector3d up = BuildMeasuredVerticalTranslationSubtarget(
+      measured_tip, 0.63, 0.01);
+  EXPECT_EQ(up.x(), measured_tip.x());
+  EXPECT_EQ(up.y(), measured_tip.y());
+  EXPECT_DOUBLE_EQ(up.z(), 0.62);
+  EXPECT_THROW(BuildMeasuredVerticalTranslationSubtarget(
+                   measured_tip, 0.55, 0.0),
+               std::invalid_argument);
+}
+
+TEST(XarmFullSamplingC3PlusTest,
      WaypointSettlePredictsOnePlanningStepOfMeasuredDrift) {
   EXPECT_TRUE(IsFullSamplingC3WaypointSettled(
       0.003, 0.06, 0.05, 0.003));
