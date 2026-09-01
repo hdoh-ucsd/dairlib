@@ -4251,10 +4251,12 @@ int DoMain(int argc, char* argv[]) {
                         cycle_recovery_planar_velocity.first;
                     cycle_recovery_params.object.start_linear_velocity_W =
                         cycle_recovery_planar_velocity.second;
+                    // Lateral correction is still enforced geometrically by
+                    // corrective x-force polarity, but its C3+ objective must
+                    // retain the global task. An x-only goal made y and yaw
+                    // regressions cost-free during recovery.
                     cycle_recovery_params.object.goal_pose =
-                        progress_end_pose;
-                    cycle_recovery_params.object.goal_pose.x() =
-                        params.object.goal_pose.x();
+                        params.object.goal_pose;
                     const auto cycle_exact =
                         RunXarmFullSamplingC3ExactTBatch(
                             cycle_recovery_params);
@@ -4287,6 +4289,15 @@ int DoMain(int argc, char* argv[]) {
                       return cycle_x_direction * (-normal_W.x()) > 0.0 &&
                           std::abs(normal_W.x()) > 0.5;
                     };
+                    auto has_cycle_task_nonregression =
+                        [&](const auto& candidate) {
+                          const auto terminal =
+                              candidate_terminal_pose(candidate);
+                          if (!terminal.has_value()) return false;
+                          return EvaluateFullSamplingC3TerminalDescent(
+                              progress_start_pose, *terminal,
+                              params.object.goal_pose, 0.0, 0.0).accepted;
+                        };
                     auto select_live_cycle_candidate =
                         [&](const std::vector<
                                 const XarmFullSamplingC3CandidateReceipt*>&
@@ -4305,6 +4316,14 @@ int DoMain(int argc, char* argv[]) {
                               continue;
                             }
                             if (!has_cycle_polarity(*candidate)) continue;
+                            if (!has_cycle_task_nonregression(*candidate)) {
+                              std::cout <<
+                                  "full_sampling_c3plus_cycle_recovery_"
+                                  "task_nonregression=REJECT sample="
+                                        << candidate->sample_name
+                                        << std::endl;
+                              continue;
+                            }
                             const auto live_receipt =
                                 EvaluateMeasuredCandidateAcquisition(
                                     acquisition_plant,

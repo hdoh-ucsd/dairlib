@@ -417,3 +417,9 @@ but task translation, orientation, and lateral acceptance are recomputed after
 release and corrective recovery. Candidate quarantine and the productive-cycle
 counter consume this post-recovery receipt, preventing an intermediate contact
 response from receiving credit for progress that recovery later removes.
+
+Corrective recovery retains the same global object goal as the primary C3+
+problem. Its candidates must be predicted nonregressive in both terminal
+translation and orientation before the existing polarity, live-IK, and capsule
+checks may authorize motion. This is a prediction-side safety condition only;
+the productive-cycle counter still consumes the measured post-recovery receipt.

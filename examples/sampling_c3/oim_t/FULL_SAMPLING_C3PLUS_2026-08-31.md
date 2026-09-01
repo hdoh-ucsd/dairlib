@@ -717,3 +717,38 @@ goal with an x-only lateral target, so its C3+ ranking is free to undo y or yaw
 progress. Gate 34 must retain the global task goal during lateral recovery and
 require predicted translation/orientation nonregression in addition to the
 existing corrective x-force polarity and physical clearance gates.
+
+## Gate 34 — task-preserving corrective recovery
+
+Corrective recovery now retains the unchanged global object goal in its C3+
+problem instead of replacing it with an x-only target. Candidate admission
+also requires predicted translation and orientation nonregression from the
+cycle baseline, in addition to the existing corrective x-force polarity,
+central-side contact, live-IK, and whole-capsule gates. The check uses zero
+progress thresholds: it prevents regression without changing the configured
+task tolerances or claiming predicted progress as physical success.
+
+```text
+source commit:                    f422fc7d
+worktree:                         dirty; Gate-34 implementation under test
+config SHA-256:                   d11cd65efbcf6ac7c814a0b690cc76f9135d27a9f607f6f10dc7d9b26051b990
+seed/settings/tolerances:         unchanged
+physical output:                  /root/push_anything_ADMM/results/xarm6_task_preserving_recovery_8000_Zm4a3u
+seven-phase acquisitions:         4 PASS
+predicted-regressive rejections:  21
+post-recovery progress:           4 PASS / 0 FAIL
+honest productive cycles:         4
+terminal translation error:       0.744534 m
+terminal orientation error:       3.02579 rad
+simulator terminal:               FAIL
+```
+
+Gate 34 passes its ownership requirement and improves the Gate-33 physical
+record from `1 PASS / 3 FAIL` to `4 PASS / 0 FAIL`. The unchanged 8,000-update
+budget then defers a fifth transaction because its measured worst-case
+acquisition/dwell/recovery receipt requires 2,242 updates while 1,730 remain.
+The larger blocker is progress quality: nonregression admits very small or
+poorly balanced gains, so four cycles still leave the object far from both
+terminal tolerances. Gate 35 must rank task-preserving recovery candidates by
+predicted Pareto descent magnitude and compare that ordering with measured
+post-recovery descent, without weakening the physical acceptance gate.
