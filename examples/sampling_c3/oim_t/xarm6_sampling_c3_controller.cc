@@ -2232,6 +2232,8 @@ int DoMain(int argc, char* argv[]) {
                   : (waypoint - current_tip).norm();
           double best_measured_waypoint_error =
               phase_entry_waypoint_error;
+          const bool use_best_so_far_conformance =
+              phase.find("neutral_anchor") != std::string::npos;
           int consecutive_conformance_violation_updates = 0;
           const int required_conformance_violation_updates = std::max(
               1, static_cast<int>(std::ceil(
@@ -2479,7 +2481,10 @@ int DoMain(int argc, char* argv[]) {
                     : (waypoint - current_tip).norm();
             const bool spatially_conformant =
                 IsFullSamplingC3WaypointExecutionConformant(
-                    best_measured_waypoint_error, measured_waypoint_error,
+                    use_best_so_far_conformance
+                        ? best_measured_waypoint_error
+                        : phase_entry_waypoint_error,
+                    measured_waypoint_error,
                     params.controller.contact_activation_tolerance);
             const auto conformance_receipt =
                 EvaluateFullSamplingC3WaypointConformancePersistence(
@@ -2497,6 +2502,10 @@ int DoMain(int argc, char* argv[]) {
                         << phase_entry_waypoint_error
                         << " best_waypoint_error_m="
                         << best_measured_waypoint_error
+                        << " reference="
+                        << (use_best_so_far_conformance
+                                ? "best_so_far"
+                                : "phase_entry")
                         << " measured_waypoint_error_m="
                         << measured_waypoint_error
                         << " tolerance_m="

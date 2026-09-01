@@ -1491,3 +1491,28 @@ still too broad: normal lower/descend convergence can be nonmonotone, whereas
 the observed periodic winding belongs specifically to long neutral-anchor
 traversal. Gate 63 must preserve phase-entry conformance for ordinary phases
 and apply persistent best-so-far conformance only to neutral anchors.
+
+## Gate 63 — neutral-anchor-scoped best-so-far conformance
+
+Persistent conformance now chooses its reference by phase: neutral-anchor
+traversals use best-so-far error, while other already-monitored reposition
+phases retain the pre-Gate-61 phase-entry reference. The spatial and temporal
+criteria are otherwise identical.
+
+```text
+source commit:                    03e751df
+config/settings/tolerances:       unchanged
+focused tests / live build:       PASS / PASS
+physical output:                  /root/push_anything_ADMM/results/xarm6_scoped_conformance_8000_K5UI1q
+measured productive cycles:       4
+neutral-anchor passes:            4
+measured q1 range:                [-0.242683, 0.845011] rad
+measured q2 range:                [-0.990659, 0.762936] rad
+simulator terminal:               FAIL (0.732075 m / 2.62883 rad)
+```
+
+Gate 63 restores physical contact progress and keeps both periodic joints away
+from their winding limits. The canonical run ends only at its honest budget
+defer, with an optimistic 34,472 additional updates required. Gate 64 is a
+separately labeled 40,000-update fall-through to exercise the scoped guard and
+Gate 60 bounded continuation after larger measured yaw transitions.

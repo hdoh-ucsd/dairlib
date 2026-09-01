@@ -583,3 +583,8 @@ integer number of measured execution updates. It filters isolated boundary
 crossings without creating another time or distance parameter; live evidence
 determines which motion phases may safely use the stronger best-so-far
 reference.
+
+The best-so-far reference is scoped to named neutral-anchor traversals, where
+periodic winding was physically observed. Other monitored reposition phases
+retain phase-entry conformance because their stable closed-loop approach is
+not necessarily monotone at 20 ms resolution.
