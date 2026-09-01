@@ -786,3 +786,36 @@ predicted `+0.385644 m / +2.17689 rad`, but measured `-0.0198602 m /
 existing measured-response conditioning to recovery candidates and rank the
 corrected terminal descent ahead of unseen raw predictions while retaining an
 exploration fall-through.
+
+## Gate 36 — measured-response-conditioned recovery history
+
+Corrective recovery now queries the same local pose/contact response model as
+primary candidate arbitration. Evidence class is ordered before normalized
+descent: compatible corrected terminals lead, unseen contacts preserve the
+exploration path, and incompatible neighborhoods remain last. Each physically
+engaged recovery stores its start, raw prediction, measured post-recovery pose,
+contact point, contact normal, and lateral outcome in the shared history.
+
+```text
+source commit:                    364c035d
+worktree:                         dirty; Gate-36 implementation under test
+config SHA-256:                   d11cd65efbcf6ac7c814a0b690cc76f9135d27a9f607f6f10dc7d9b26051b990
+seed/settings/tolerances:         unchanged
+physical output:                  /root/push_anything_ADMM/results/xarm6_response_conditioned_recovery_8000_2sybHu
+recovery observations stored:     1 PASS
+later recovery reuse:             not reached
+conditioned successor demotions:  39
+post-recovery progress:           1 PASS / 1 FAIL
+terminal translation error:       0.793330 m
+terminal orientation error:       2.43800 rad
+simulator terminal:               FAIL
+```
+
+Gate 36 is implemented and its history-write branch is physically proven, but
+the read/ranking branch remains pending because the next primary resample
+failed first. The new recovery observation plus prior top-face evidence
+correctly demoted 39 candidates; all 200 replenished candidates then failed
+the unchanged Pareto acceptance rule, so execution held at update 3,892.
+Gate 37 must restore live-IK candidate availability after evidence-based face
+demotion by searching the remaining contact faces, while leaving incompatible
+top-face candidates quarantined and all tolerances unchanged.

@@ -4022,6 +4022,8 @@ int DoMain(int argc, char* argv[]) {
                   std::optional<
                       XarmFullSamplingC3NormalizedParetoDescentReceipt>
                           selected_cycle_recovery_prediction;
+                  std::optional<XarmFullSamplingC3MeasuredResponse>
+                      selected_cycle_recovery_observation;
                   if (progress_lateral_rejected) {
                     live_execution_rejections.insert(
                         progress_plan.sample_name);
@@ -4292,13 +4294,45 @@ int DoMain(int argc, char* argv[]) {
                       return cycle_x_direction * (-normal_W.x()) > 0.0 &&
                           std::abs(normal_W.x()) > 0.5;
                     };
+                    auto condition_cycle_candidate =
+                        [&](const auto& candidate) {
+                          XarmFullSamplingC3ResponseConditioningReceipt
+                              receipt;
+                          const auto terminal =
+                              candidate_terminal_pose(candidate);
+                          if (!terminal.has_value()) {
+                            receipt.ranking_class = 2;
+                            return receipt;
+                          }
+                          return
+                              EvaluateFullSamplingC3MeasuredResponseConditioning(
+                                  progress_end_pose, *terminal,
+                                  candidate.sample_point_O,
+                                  candidate.sample_normal_O,
+                                  params.object.goal_pose,
+                                  measured_response_history,
+                                  params.task.translation_tolerance,
+                                  params.task.orientation_tolerance,
+                                  params.controller.lateral_drift_tolerance,
+                                  params.controller
+                                      .successor_minimum_translation_progress,
+                                  params.controller
+                                      .successor_minimum_yaw_progress);
+                        };
                     auto has_cycle_task_nonregression =
                         [&](const auto& candidate) {
                           const auto terminal =
                               candidate_terminal_pose(candidate);
                           if (!terminal.has_value()) return false;
+                          const auto conditioning =
+                              condition_cycle_candidate(candidate);
+                          const Eigen::Vector3d& ranked_terminal =
+                              conditioning.ranking_class == 0
+                                  ? conditioning
+                                        .corrected_terminal_object_pose
+                                  : *terminal;
                           return EvaluateFullSamplingC3NormalizedParetoDescent(
-                              progress_start_pose, *terminal,
+                              progress_start_pose, ranked_terminal,
                               params.object.goal_pose,
                               params.task.translation_tolerance,
                               params.task.orientation_tolerance)
@@ -4313,7 +4347,12 @@ int DoMain(int argc, char* argv[]) {
                           }
                           const auto descent =
                               EvaluateFullSamplingC3NormalizedParetoDescent(
-                                  progress_start_pose, *terminal,
+                                  progress_start_pose,
+                                  condition_cycle_candidate(candidate)
+                                              .ranking_class == 0
+                                      ? condition_cycle_candidate(candidate)
+                                            .corrected_terminal_object_pose
+                                      : *terminal,
                                   params.object.goal_pose,
                                   params.task.translation_tolerance,
                                   params.task.orientation_tolerance);
@@ -4347,6 +4386,8 @@ int DoMain(int argc, char* argv[]) {
                                         << std::endl;
                               continue;
                             }
+                            const auto response_conditioning =
+                                condition_cycle_candidate(*candidate);
                             const auto live_receipt =
                                 EvaluateMeasuredCandidateAcquisition(
                                     acquisition_plant,
@@ -4383,6 +4424,14 @@ int DoMain(int argc, char* argv[]) {
                                       << " central_side_contact=1"
                                       << " sample_height_O="
                                       << candidate->sample_height_O
+                                      << " response_rank_class="
+                                      << response_conditioning.ranking_class
+                                      << " response_observations="
+                                      << response_conditioning
+                                             .matching_observations
+                                      << " corrected_terminal_accepted="
+                                      << response_conditioning
+                                             .corrected_terminal_accepted
                                       << std::endl;
                             if (live_accepted) return candidate;
                           }
@@ -4399,6 +4448,11 @@ int DoMain(int argc, char* argv[]) {
                         ranked_cycle_candidates.begin(),
                         ranked_cycle_candidates.end(),
                         [&](const auto* a, const auto* b) {
+                          const int a_rank =
+                              condition_cycle_candidate(*a).ranking_class;
+                          const int b_rank =
+                              condition_cycle_candidate(*b).ranking_class;
+                          if (a_rank != b_rank) return a_rank < b_rank;
                           return cycle_task_descent_magnitude(*a) >
                               cycle_task_descent_magnitude(*b);
                         });
@@ -4426,6 +4480,11 @@ int DoMain(int argc, char* argv[]) {
                         ranked_cycle_contact_candidates.begin(),
                         ranked_cycle_contact_candidates.end(),
                         [&](const auto* a, const auto* b) {
+                          const int a_rank =
+                              condition_cycle_candidate(*a).ranking_class;
+                          const int b_rank =
+                              condition_cycle_candidate(*b).ranking_class;
+                          if (a_rank != b_rank) return a_rank < b_rank;
                           const double a_descent =
                               cycle_task_descent_magnitude(*a);
                           const double b_descent =
@@ -4597,6 +4656,17 @@ int DoMain(int argc, char* argv[]) {
                                   params.object.goal_pose,
                                   params.task.translation_tolerance,
                                   params.task.orientation_tolerance);
+                          XarmFullSamplingC3MeasuredResponse observation;
+                          observation.start_object_pose = cycle_attempt_pose;
+                          observation.predicted_terminal_object_pose =
+                              *predicted_terminal;
+                          observation.sample_point_O =
+                              cycle_candidate->sample_point_O;
+                          observation.sample_normal_O =
+                              cycle_candidate->sample_normal_O;
+                          selected_cycle_recovery_observation = observation;
+                          const auto response_conditioning =
+                              condition_cycle_candidate(*cycle_candidate);
                           std::cout <<
                               "full_sampling_c3plus_cycle_recovery_"
                               "predicted_descent=PASS sample="
@@ -4610,6 +4680,11 @@ int DoMain(int argc, char* argv[]) {
                                     << " orientation_progress_rad="
                                     << selected_cycle_recovery_prediction
                                            ->terminal.orientation_progress
+                                    << " response_rank_class="
+                                    << response_conditioning.ranking_class
+                                    << " response_observations="
+                                    << response_conditioning
+                                           .matching_observations
                                     << std::endl;
                         }
                       }
@@ -4937,6 +5012,30 @@ int DoMain(int argc, char* argv[]) {
                               << " measured_orientation_progress_rad="
                               << measured_recovery_descent.terminal
                                      .orientation_progress
+                              << std::endl;
+                  }
+                  if (selected_cycle_recovery_observation.has_value()) {
+                    selected_cycle_recovery_observation
+                        ->measured_terminal_object_pose = post_recovery_pose;
+                    selected_cycle_recovery_observation->lateral_rejected =
+                        !post_recovery_progress.lateral_accepted;
+                    measured_response_history.push_back(
+                        *selected_cycle_recovery_observation);
+                    std::cout <<
+                        "full_sampling_c3plus_cycle_recovery_response_"
+                        "observation=PASS history_size="
+                              << measured_response_history.size()
+                              << " sample_point_O="
+                              << selected_cycle_recovery_observation
+                                     ->sample_point_O.transpose()
+                              << " sample_normal_O="
+                              << selected_cycle_recovery_observation
+                                     ->sample_normal_O.transpose()
+                              << " lateral_rejected="
+                              << selected_cycle_recovery_observation
+                                     ->lateral_rejected
+                              << " terminal_accepted="
+                              << post_recovery_progress.terminal.accepted
                               << std::endl;
                   }
                   std::cout <<

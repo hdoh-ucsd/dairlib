@@ -430,3 +430,10 @@ by the resulting dimensionless magnitude. The selected predicted receipt is
 retained through physical recovery and compared with the post-recovery pose.
 This comparison is evidence, not acceptance: physical Pareto descent remains
 the authority when the C3+ rollout overpredicts the measured response.
+
+Recovery contacts participate in measured-response conditioning. Their model
+prediction and final post-recovery measurement are stored in the existing
+pose/contact-neighborhood history. Candidate ordering first applies the
+existing compatible/unseen/incompatible evidence classes and only then applies
+normalized predicted or corrected descent. Unseen contacts remain explorable;
+an observed incompatible neighborhood cannot outrank them.
