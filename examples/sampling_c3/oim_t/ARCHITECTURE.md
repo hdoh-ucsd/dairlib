@@ -624,3 +624,23 @@ Response retries are receding-horizon transactions, not a static candidate
 list. After every released response invalidation, all recovery dynamics are
 rebuilt from current measured object pose and planar velocity before geometric
 or learned-response ranking is repeated.
+
+The same measured replan authority applies to released acquisition failures in
+lift, neutral-anchor, verticalize, traverse, lower, descend, and contact
+phases. Replanning remains forbidden while physical release is unverified.
+
+Candidate dynamics may be refreshed without erasing physical failure
+provenance. Deterministic sample names rejected during one recovery transaction
+remain excluded across its measured-state replans, forcing contact diversity;
+the ledger has transaction scope and is not a permanent global quarantine.
+
+Open-table terminal acceptance has one pure C++ authority. It independently
+evaluates planar Euclidean translation error and wrapped yaw error against the
+canonical configuration tolerances, then requires both. Productive handoff,
+remaining budget, and intermediate normalized progress cannot override it.
+
+The planar model manifold is enforced during physical response, not only at
+the next planning boundary. Primary and corrective dwell compare live object
+height and tilt with the same configuration-backed settle bounds; leaving that
+manifold invalidates contact, requires measured release, and cannot earn
+planar productive credit.

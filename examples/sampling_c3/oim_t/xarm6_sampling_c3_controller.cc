@@ -4273,6 +4273,8 @@ int DoMain(int argc, char* argv[]) {
                   bool progress_lateral_rejected = false;
                   bool progress_contact_productive = false;
                   bool progress_terminal_regression = false;
+                  bool progress_upright_rejected = false;
+                  bool physical_upright_rejected = false;
                   int progress_contact_dwell = 0;
                   while (progress_contact_reached &&
                          progress_contact_dwell <
@@ -4292,6 +4294,18 @@ int DoMain(int argc, char* argv[]) {
                     ++progress_contact_dwell;
                     const Eigen::Vector3d dwell_pose =
                         read_full_object_pose();
+                    const auto dwell_spatial_pose =
+                        read_full_object_spatial_pose();
+                    progress_upright_rejected =
+                        !IsXarmFullSamplingC3ObjectUpright(
+                            dwell_spatial_pose.first,
+                            dwell_spatial_pose.second,
+                            params.object.resting_height,
+                            params.controller.contact_activation_tolerance,
+                            params.task.orientation_tolerance);
+                    physical_upright_rejected =
+                        physical_upright_rejected ||
+                        progress_upright_rejected;
                     progress_lateral_rejected =
                         std::abs(dwell_pose.x() -
                                  params.object.goal_pose.x()) >
@@ -4314,6 +4328,7 @@ int DoMain(int argc, char* argv[]) {
                         (!dwell_terminal_descent.translation_nonregressive ||
                          !dwell_terminal_descent.orientation_nonregressive);
                     if (progress_lateral_rejected ||
+                        progress_upright_rejected ||
                         progress_contact_productive ||
                         progress_terminal_regression) {
                       break;
@@ -4328,6 +4343,8 @@ int DoMain(int argc, char* argv[]) {
                             << progress_lateral_rejected
                             << " terminal_regression="
                             << progress_terminal_regression
+                            << " upright_rejected="
+                            << progress_upright_rejected
                             << " updates=" << full_execution_updates
                             << std::endl;
                   auto execute_task_waypoint = [&](const Eigen::Vector3d& goal,
@@ -4450,14 +4467,17 @@ int DoMain(int argc, char* argv[]) {
                       progress_contact_dwell >=
                           params.controller.successor_minimum_contact_steps;
                   const bool terminal_descent_rejected =
-                      terminal_response_observed && !productive_progress &&
-                      !progress_lateral_rejected;
+                      progress_upright_rejected ||
+                      (terminal_response_observed && !productive_progress &&
+                       !progress_lateral_rejected);
                   bool terminal_descent_released = false;
                   if (terminal_descent_rejected) {
                     live_execution_rejections.insert(
                         progress_plan.sample_name);
                     const char* terminal_rejection_reason =
-                        (!measured_terminal_descent
+                        progress_upright_rejected
+                            ? "object_not_upright"
+                            : (!measured_terminal_descent
                               .translation_nonregressive ||
                          !measured_terminal_descent
                               .orientation_nonregressive)
@@ -4480,7 +4500,8 @@ int DoMain(int argc, char* argv[]) {
                               << std::endl;
                   }
                   while (terminal_descent_rejected &&
-                         progress_contact_reached && progress_recovered &&
+                         progress_contact_reached &&
+                         (progress_recovered || progress_upright_rejected) &&
                          !terminal_descent_released &&
                          full_execution_updates <
                              FLAGS_full_execution_steps) {
@@ -5335,6 +5356,7 @@ int DoMain(int argc, char* argv[]) {
                       }
                       bool cycle_response_retry = false;
                       bool cycle_cleared = false;
+                      bool cycle_upright_rejected = false;
                       if (cycle_contacted) {
                         bool cycle_crossing_rejected = false;
                         bool cycle_contact_lost_rejected = false;
@@ -5347,6 +5369,20 @@ int DoMain(int argc, char* argv[]) {
                                FLAGS_full_execution_steps) {
                           const Eigen::Vector3d measured_object =
                               read_full_object_pose();
+                          const auto measured_spatial_object =
+                              read_full_object_spatial_pose();
+                          cycle_upright_rejected =
+                              cycle_upright_rejected ||
+                              !IsXarmFullSamplingC3ObjectUpright(
+                                  measured_spatial_object.first,
+                                  measured_spatial_object.second,
+                                  params.object.resting_height,
+                                  params.controller
+                                      .contact_activation_tolerance,
+                                  params.task.orientation_tolerance);
+                          physical_upright_rejected =
+                              physical_upright_rejected ||
+                              cycle_upright_rejected;
                           const double measured_signed_error =
                               measured_object.x() -
                               params.object.goal_pose.x();
@@ -5386,7 +5422,7 @@ int DoMain(int argc, char* argv[]) {
                           if (std::abs(measured_signed_error) <=
                                   progress_lateral_reserve_limit ||
                               crossed_goal || wrong_polarity_response ||
-                              contact_lost) {
+                              contact_lost || cycle_upright_rejected) {
                             if (crossed_goal) {
                               cycle_crossing_rejected = true;
                               std::cout <<
@@ -5424,6 +5460,17 @@ int DoMain(int argc, char* argv[]) {
                                         << measured_gap
                                         << " response_steps="
                                         << cycle_recovery_response_steps
+                                        << " updates="
+                                        << full_execution_updates
+                                        << std::endl;
+                            }
+                            if (cycle_upright_rejected) {
+                              std::cout <<
+                                  "full_sampling_c3plus_cycle_recovery_"
+                                  "upright=REJECT"
+                                        << " object_position_W="
+                                        << measured_spatial_object.first
+                                               .transpose()
                                         << " updates="
                                         << full_execution_updates
                                         << std::endl;
@@ -5521,12 +5568,16 @@ int DoMain(int argc, char* argv[]) {
                                 cycle_cleared, progress_recovered,
                                 cycle_crossing_rejected,
                                 cycle_wrong_polarity_rejected,
-                                cycle_contact_lost_rejected);
+                                cycle_contact_lost_rejected,
+                                cycle_upright_rejected);
                       }
                       if (cycle_contacted) {
                         post_recovery_release_verified = cycle_cleared;
                       }
-                      if (cycle_contacted && !cycle_response_retry) break;
+                      if (cycle_contacted && !cycle_response_retry &&
+                          !cycle_upright_rejected) {
+                        break;
+                      }
 
                       const std::string failed_cycle_sample =
                           cycle_candidate->sample_name;
@@ -5595,8 +5646,11 @@ int DoMain(int argc, char* argv[]) {
                           cycle_candidate->sample_normal_O,
                           cycle_release_name.c_str(), cycle_face};
                       cycle_live_pose = read_full_object_pose();
-                      if (cycle_response_retry &&
-                          failed_approach_released) {
+                      const bool measured_failure_replan =
+                          ShouldReplanXarmFullSamplingC3ReleasedExecutionFailure(
+                              !cycle_contacted || cycle_response_retry,
+                              failed_approach_released);
+                      if (measured_failure_replan) {
                         cycle_planning_pose = cycle_live_pose;
                         cycle_x_direction = params.object.goal_pose.x() -
                             cycle_planning_pose.x();
@@ -5687,7 +5741,12 @@ int DoMain(int argc, char* argv[]) {
                             ranked_cycle_contact_candidates.begin(),
                             ranked_cycle_contact_candidates.end(),
                             refreshed_order);
-                        cycle_execution_rejections.clear();
+                        // A new linearization changes the candidate dynamics,
+                        // but it does not erase a physical acquisition failure
+                        // from this recovery transaction. Sample identities are
+                        // deterministic across refreshed batches, so retaining
+                        // them forces the next measured replan to try another
+                        // contact instead of reacquiring the same failed one.
                         std::cout <<
                             "full_sampling_c3plus_cycle_recovery_"
                             "measured_replan=PASS object_pose="
@@ -5700,6 +5759,7 @@ int DoMain(int argc, char* argv[]) {
                                          ->successful.size()
                                   << " failed_sample="
                                   << failed_cycle_sample
+                                  << " failed_phase=" << failed_phase
                                   << " updates=" << full_execution_updates
                                   << std::endl;
                       }
@@ -5861,6 +5921,7 @@ int DoMain(int argc, char* argv[]) {
                                    measured_release_recovery_updates.end())
                             << std::endl;
                   full_task_progress_cycle =
+                      !physical_upright_rejected &&
                       post_recovery_progress.accepted &&
                       progress_recovered &&
                       (progress_knots_reached ||
@@ -5875,12 +5936,14 @@ int DoMain(int argc, char* argv[]) {
                               .successor_minimum_translation_progress,
                           params.controller.successor_minimum_yaw_progress);
                   const bool recovery_only_continuation =
+                      !physical_upright_rejected &&
                       !post_recovery_progress.accepted &&
                       progress_recovered &&
                       (progress_lateral_rejected ||
                        terminal_descent_released ||
                        bounded_replanning_transaction.accepted);
                   const bool bounded_corridor_continuation =
+                      !physical_upright_rejected &&
                       ShouldContinueXarmFullSamplingC3BoundedCorridorState(
                           full_task_progress_cycle,
                           post_recovery_progress.accepted,
@@ -6072,13 +6135,11 @@ int DoMain(int argc, char* argv[]) {
                 << hold_tip.transpose() << " q=" << hold_q.transpose()
                 << std::endl;
       const Eigen::Vector3d terminal_pose = read_full_object_pose();
-      const double terminal_translation_error =
-          (terminal_pose.head<2>() - params.object.goal_pose.head<2>()).norm();
-      const double terminal_orientation_error = std::abs(
-          WrappedAngleError(params.object.goal_pose.z(), terminal_pose.z()));
-      const bool open_table_terminal =
-          terminal_translation_error <= params.task.translation_tolerance &&
-          terminal_orientation_error <= params.task.orientation_tolerance;
+      const auto open_table_terminal =
+          EvaluateXarmFullSamplingC3OpenTableTerminal(
+              terminal_pose, params.object.goal_pose,
+              params.task.translation_tolerance,
+              params.task.orientation_tolerance);
       const auto terminal_budget_estimate =
           EstimateXarmFullSamplingC3TerminalBudget(
               terminal_pose, params.object.goal_pose,
@@ -6106,10 +6167,16 @@ int DoMain(int argc, char* argv[]) {
                 << terminal_budget_estimate.optimistic_remaining_updates
                 << std::endl;
       std::cout << "full_sampling_c3plus_open_table_terminal="
-                << (open_table_terminal ? "PASS" : "FAIL")
+                << (open_table_terminal.accepted ? "PASS" : "FAIL")
                 << " object_pose=" << terminal_pose.transpose()
-                << " translation_error_m=" << terminal_translation_error
-                << " orientation_error_rad=" << terminal_orientation_error
+                << " translation_error_m="
+                << open_table_terminal.translation_error
+                << " orientation_error_rad="
+                << open_table_terminal.orientation_error
+                << " translation_accepted="
+                << open_table_terminal.translation_accepted
+                << " orientation_accepted="
+                << open_table_terminal.orientation_accepted
                 << " translation_tolerance_m="
                 << params.task.translation_tolerance
                 << " orientation_tolerance_rad="
@@ -6119,7 +6186,7 @@ int DoMain(int argc, char* argv[]) {
               reached_waypoints, osc_execution_plan.positions_W.cols(),
               any_full_task_progress_cycle, contact_cycle_budget_deferred,
               full_execution_updates, FLAGS_full_execution_steps,
-              open_table_terminal);
+              open_table_terminal.accepted);
       std::cout << "full_sampling_c3plus_acceptance_gate="
                 << (terminal_status.accepted ? "PASS" : "FAIL")
                 << " reason=" << terminal_status.reason

@@ -52,6 +52,15 @@ EvaluateXarmFullSamplingC3PlanarSettle(
     double yaw_tolerance, double vertical_position_tolerance,
     double tilt_tolerance);
 
+// Contact response must remain in the planar model's physical manifold. This
+// uses the same resting-height and tilt bounds as planar-settle admission, but
+// can be evaluated from one live spatial pose during dwell.
+bool IsXarmFullSamplingC3ObjectUpright(
+    const Eigen::Vector3d& position_W,
+    const Eigen::Quaterniond& orientation_WO,
+    double resting_height, double vertical_position_tolerance,
+    double tilt_tolerance);
+
 // Preserve the unchanged outer lateral tolerance while reserving one existing
 // contact-activation band for the next physical response.
 double FullSamplingC3LateralReserveLimit(
@@ -140,7 +149,13 @@ EvaluateFullSamplingC3WaypointConformancePersistence(
 // failure was crossing, wrong polarity, or contact loss.
 bool ShouldRetryXarmFullSamplingC3RecoveryResponse(
     bool release_cleared, bool lateral_recovered, bool crossed_goal,
-    bool wrong_polarity, bool contact_lost);
+    bool wrong_polarity, bool contact_lost, bool object_not_upright = false);
+
+// Any failed physical acquisition or response invalidates trajectories
+// linearized at the pre-execution object state. Replan only after the pusher
+// is verified released so the new batch cannot inherit an active contact.
+bool ShouldReplanXarmFullSamplingC3ReleasedExecutionFailure(
+    bool execution_failed, bool release_cleared);
 
 // A released pose that passes the global lateral corridor and bounded task
 // transaction may seed another solve even when it misses the stricter reserve
@@ -557,6 +572,23 @@ struct XarmFullSamplingC3TerminalStatus {
   int return_code{};
   std::string reason;
 };
+
+struct XarmFullSamplingC3OpenTableTerminalReceipt {
+  double translation_error{};
+  double orientation_error{};
+  bool translation_accepted{};
+  bool orientation_accepted{};
+  bool accepted{};
+};
+
+// Gate 100 is the unchanged open_table definition: planar Euclidean position
+// error and wrapped yaw error must independently satisfy their configured
+// tolerances. Productive-cycle provenance cannot override either component.
+XarmFullSamplingC3OpenTableTerminalReceipt
+EvaluateXarmFullSamplingC3OpenTableTerminal(
+    const Eigen::Vector3d& object_pose,
+    const Eigen::Vector3d& goal_object_pose,
+    double translation_tolerance, double orientation_tolerance);
 
 // Separates cumulative physical handoff provenance from terminal task
 // acceptance. A later measured-budget defer must not erase an earlier

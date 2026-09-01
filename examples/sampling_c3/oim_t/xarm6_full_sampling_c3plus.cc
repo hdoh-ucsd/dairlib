@@ -118,6 +118,30 @@ EvaluateXarmFullSamplingC3PlanarSettle(
   return receipt;
 }
 
+bool IsXarmFullSamplingC3ObjectUpright(
+    const Eigen::Vector3d& position_W,
+    const Eigen::Quaterniond& orientation_WO,
+    double resting_height, double vertical_position_tolerance,
+    double tilt_tolerance) {
+  if (!position_W.allFinite() ||
+      !orientation_WO.coeffs().allFinite() ||
+      !std::isfinite(resting_height) ||
+      !std::isfinite(vertical_position_tolerance) ||
+      !std::isfinite(tilt_tolerance) || orientation_WO.norm() == 0.0 ||
+      vertical_position_tolerance < 0.0 || tilt_tolerance < 0.0) {
+    throw std::invalid_argument(
+        "full Sampling-C3+ upright-pose inputs are invalid");
+  }
+  const Eigen::Quaterniond orientation = orientation_WO.normalized();
+  const double vertical_error =
+      std::abs(position_W.z() - resting_height);
+  const double tilt = std::acos(std::clamp(
+      (orientation.toRotationMatrix() * Eigen::Vector3d::UnitZ()).z(),
+      -1.0, 1.0));
+  return vertical_error <= vertical_position_tolerance &&
+      tilt <= tilt_tolerance;
+}
+
 double FullSamplingC3LateralReserveLimit(
     double lateral_drift_tolerance, double contact_activation_tolerance) {
   if (!std::isfinite(lateral_drift_tolerance) ||
@@ -266,9 +290,16 @@ EvaluateFullSamplingC3WaypointConformancePersistence(
 
 bool ShouldRetryXarmFullSamplingC3RecoveryResponse(
     bool release_cleared, bool lateral_recovered, bool crossed_goal,
-    bool wrong_polarity, bool contact_lost) {
-  return release_cleared && !lateral_recovered &&
-      (crossed_goal || wrong_polarity || contact_lost);
+    bool wrong_polarity, bool contact_lost, bool object_not_upright) {
+  return release_cleared &&
+      (object_not_upright ||
+       (!lateral_recovered &&
+        (crossed_goal || wrong_polarity || contact_lost)));
+}
+
+bool ShouldReplanXarmFullSamplingC3ReleasedExecutionFailure(
+    bool execution_failed, bool release_cleared) {
+  return execution_failed && release_cleared;
 }
 
 bool ShouldContinueXarmFullSamplingC3BoundedCorridorState(
@@ -1799,6 +1830,34 @@ XarmFullSamplingC3OscExecutionPlan BuildXarmFullSamplingC3OscExecutionPlan(
         execution.time_vector[knot] > execution.time_vector[knot - 1];
   }
   return execution;
+}
+
+XarmFullSamplingC3OpenTableTerminalReceipt
+EvaluateXarmFullSamplingC3OpenTableTerminal(
+    const Eigen::Vector3d& object_pose,
+    const Eigen::Vector3d& goal_object_pose,
+    double translation_tolerance, double orientation_tolerance) {
+  if (!object_pose.allFinite() || !goal_object_pose.allFinite() ||
+      !std::isfinite(translation_tolerance) ||
+      !std::isfinite(orientation_tolerance) ||
+      translation_tolerance <= 0.0 || orientation_tolerance <= 0.0) {
+    throw std::invalid_argument(
+        "full Sampling-C3+ open_table terminal inputs are invalid");
+  }
+  constexpr double kPi = 3.14159265358979323846;
+  constexpr double kTwoPi = 2.0 * kPi;
+  XarmFullSamplingC3OpenTableTerminalReceipt receipt;
+  receipt.translation_error =
+      (object_pose.head<2>() - goal_object_pose.head<2>()).norm();
+  receipt.orientation_error = std::abs(std::remainder(
+      goal_object_pose.z() - object_pose.z(), kTwoPi));
+  receipt.translation_accepted =
+      receipt.translation_error <= translation_tolerance;
+  receipt.orientation_accepted =
+      receipt.orientation_error <= orientation_tolerance;
+  receipt.accepted =
+      receipt.translation_accepted && receipt.orientation_accepted;
+  return receipt;
 }
 
 XarmFullSamplingC3TerminalStatus EvaluateXarmFullSamplingC3TerminalStatus(

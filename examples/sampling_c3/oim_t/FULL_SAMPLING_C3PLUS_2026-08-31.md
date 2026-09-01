@@ -1768,3 +1768,143 @@ physical contact approach failed whole-shaft clearance; its fallback then
 reused the old recovery batch. Gate 75 extends Gate 72 measured replanning to
 every verified released execution failure, including lift/anchor/traverse/
 lower/descend/contact acquisition failures.
+
+## Gate 75 — measured replan after every released execution failure
+
+Every failed physical acquisition or response now invalidates trajectories
+linearized at the pre-execution state. After measured release, the controller
+rebuilds the exact/perimeter/mesh/refinement batches from current object pose
+and conditioned planar velocity. A pure decision helper keeps the replan
+fail-closed while contact remains uncleared.
+
+```text
+source commit:                    6726a269
+config/settings/tolerances:       unchanged
+focused tests / live build:       PASS / PASS
+physical output:                  /root/push_anything_ADMM/results/xarm6_all_failure_measured_replan_40000_mgJivA
+strict productive cycles:         11
+measured failure replans:         44
+updates used:                     40000 / 40000
+measured q1 range:                [-0.000349, 0.896269] rad
+measured q2 range:                [-1.121169, 0.827246] rad
+simulator terminal:               FAIL (0.603574 m / 1.80788 rad)
+```
+
+Gate 75 passes its activation objective. All 44 contact failures released and
+rebuilt 72 candidates from new measurements. The trace exposes Gate 76: the
+refresh cleared the recovery transaction's rejection set, so every batch
+selected `crossbar_bottom_left_seeded_6` again.
+
+## Gate 76 — preserve physical rejection provenance across replans
+
+Measured replanning now retains deterministic failed sample identities for the
+duration of one recovery transaction. Refreshing the state linearization no
+longer makes the same physically failed contact immediately eligible again;
+the existing ranked selector must advance to a different executable sample.
+The ledger still resets naturally at the start of the next independently
+planned recovery transaction.
+
+```text
+config/settings/tolerances:       unchanged
+focused tests / live build:       PASS / PASS
+physical output:                  /root/push_anything_ADMM/results/xarm6_rejection_provenance_24000_DpvDMy
+strict productive cycles:         5
+measured failure replans:         2
+failed/next sample sequence:      stem_left_refined_14 -> stem_left_seeded_0 -> crossbar_top
+updates used:                     10255 / 24000
+simulator terminal:               FAIL (0.667363 m / 2.48938 rad)
+```
+
+Gate 76 passes physically: the rejection ledger grew from one to two entries
+and each measured replan selected a different sample. The trace then left the
+planar model manifold (`tilt_rad=2.84318`) before the next settle admission.
+
+## Gate 77 — live physical fall-through rejection
+
+Every primary and corrective contact-response sample now checks object resting
+height and tilt against the same unchanged bounds used by planar-settle
+admission. A violation immediately ends dwell, quarantines the candidate, and
+requires measured release even when lateral error is already recovered. This
+does not claim that a toppled object can be recovered; it withdraws force and
+prevents the controller from awarding planar productive credit after physical
+fall-through.
+
+```text
+config/settings/tolerances:       unchanged
+focused tests / live build:       PASS / PASS
+no-false-positive output:         /root/push_anything_ADMM/results/xarm6_live_upright_guard_12000_pygBGJ
+productive cycles / activations:  7 / 0 (activation pending in this run)
+canonical activation output:      /root/push_anything_ADMM/results/xarm6_gate99_canonical_8000_3cS30o
+rejection position z:             0.0197899 m
+configured height / tolerance:    0.0300000 m / 0.0030000 m
+measured release:                 PASS
+productive credit after reject:   0
+```
+
+Gate 77 passes both conditions: the 12,000-step run showed no false positive,
+and the canonical run activated the guard, physically released, invalidated
+the contact, and granted no productive credit.
+
+## Gates 78–100 — acceptance closure contract
+
+These gates close the implementation by naming the existing independent
+authorities that must remain valid; they are not permission to add tuning
+changes. Gates 78–98 are deterministic C++ regression authorities, Gate 99 is
+the unchanged 8,000-step integration benchmark, and Gate 100 is the physical
+terminal definition. A Gate-100 implementation PASS means the acceptance math
+is present and tested; the scenario result remains FAIL until both unchanged
+tolerances are physically met.
+
+| Gate | Independent authority | C++ regression evidence |
+|---:|---|---|
+| 78 | Measured velocity conditioning and planar settling | `ConditionsMeasuredVelocityForOpenTableModel`, `PlanarSettleUsesMeasuredPoseStability` |
+| 79 | Spatial state codec and invalid-input rejection | `SpatialStateRoundTrips`, `InvalidStatesAreRejected` |
+| 80 | Canonical 19-state/3-input multi-contact LCS | `SpatialMultibodyLcsHasCanonicalDimensions` |
+| 81 | QP, projection, consensus, and rollout residual reporting | `FirstSolveReportsBothQpAndProjectionResiduals` |
+| 82 | One-to-one exact-T contact geometry | `ExactTSamplesMatchReducedPlannerGeometry` |
+| 83 | Deterministic perimeter and mesh sampling | `SeededPerimeterSamplesAreReproducible`, `ExactCollisionMeshSamplesAreReproducible` |
+| 84 | Candidate accounting preserves negative solves | `CandidateBufferPreservesRejectedSamples` |
+| 85 | Parallel candidate reduction matches serial ordering | `ParallelReductionMatchesSerialSelection` |
+| 86 | Task-space execution retains every spatial knot | `SelectedPlanPreservesEverySpatialKnot` |
+| 87 | Lateral corridor prefix stops before violation | `CorridorSafePrefixStopsBeforePredictedLateralViolation` |
+| 88 | Preview/execution acquisition conformance | `PhysicalAcquisitionConformanceRequiresVerifiedRecovery` |
+| 89 | Persistent waypoint conformance | `WaypointConformanceUsesExistingActivationTolerance`, `WaypointConformanceRequiresOnePlanningIntervalOfViolation` |
+| 90 | Measured acquisition/dwell/release budget | `MeasuredCycleBudgetReservesAcquisitionDwellAndRecovery` |
+| 91 | Released failure retry and fresh measured replan | `ReleasedRecoveryFailuresAllInvalidateAndRetry`, `EveryReleasedExecutionFailureRequiresMeasuredReplan` |
+| 92 | Lateral recovery and first corridor-entry semantics | `LateralRecoveryUsesFirstCorridorEntryBeforeOvershoot` |
+| 93 | Replicated response-class conditioning | `MeasuredResponseConditioningPreservesCostClassSemantics` |
+| 94 | Yaw-equivariant response transfer | `EquivariantResponseConditioningTransfersAcrossLargeYaw` |
+| 95 | Bounded component transaction debt | `ComponentTransactionBoundsInactiveTaskDebt` |
+| 96 | Strict measured Pareto productive credit | `PostRecoveryProgressOwnsTheFinalMeasuredPose` |
+| 97 | Optimistic terminal budget remains diagnostic | `TerminalBudgetEstimateIsAnOptimisticMeasuredLowerBound`, `TerminalBudgetSufficiencyIsNecessaryButNotTerminalSuccess` |
+| 98 | Productive handoff and terminal status remain distinct | `ProductiveHandoffSurvivesLaterMeasuredBudgetDefer`, `MeasuredBudgetDeferWithoutProductiveHandoffFailsClosed` |
+| 99 | Canonical 8,000-step closed-loop benchmark | latest receipt recorded below |
+| 100 | Both unchanged translation and wrapped-yaw tolerances | `Gate100RequiresBothUnchangedOpenTableTolerances` plus physical terminal receipt |
+
+Gate 100 now uses a pure receipt that reports translation and orientation
+acceptance separately and combines them with logical AND. The controller calls
+that same function for its process return status, eliminating a second inline
+terminal formula while preserving the original floating-point operations and
+configured tolerances.
+
+### Gate 99 execution and Gate 100 result
+
+```text
+source commit:                    6726a269 (dirty experiment; changes below)
+canonical config SHA-256:         d11cd65efbcf6ac7c814a0b690cc76f9135d27a9f607f6f10dc7d9b26051b990
+focused C++ authorities 78–98:    PASS
+physical output:                  /root/push_anything_ADMM/results/xarm6_gate99_canonical_8000_3cS30o
+requested benchmark:              8000 updates at 20 ms
+updates used:                     4687
+strict productive cycles:         1
+Gate 99 integration execution:    COMPLETE
+Gate 100 implementation:          PASS
+Gate 100 physical translation:    FAIL (0.815714 m > 0.05 m)
+Gate 100 physical orientation:    FAIL (2.93414 rad > 0.10 rad)
+open_table terminal:              FAIL
+```
+
+Implementation has therefore proceeded through Gate 100, but `open_table` has
+not succeeded. The next research blocker is prevention, not detection, of
+object height loss before corrective contact. The terminal tolerances, seeds,
+controller defaults, solver settings, and YAML remain unchanged.

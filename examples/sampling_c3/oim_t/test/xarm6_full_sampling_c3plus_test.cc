@@ -48,6 +48,21 @@ TEST(XarmFullSamplingC3PlusTest, PlanarSettleUsesMeasuredPoseStability) {
       0.0298, 0.002, 0.002, 0.003, 0.10).accepted);
 }
 
+TEST(XarmFullSamplingC3PlusTest,
+     ContactResponseRejectsPhysicalFallThroughImmediately) {
+  EXPECT_TRUE(IsXarmFullSamplingC3ObjectUpright(
+      Eigen::Vector3d(0.381, 0.2, 0.03), Eigen::Quaterniond::Identity(),
+      0.03, 0.003, 0.10));
+  EXPECT_FALSE(IsXarmFullSamplingC3ObjectUpright(
+      Eigen::Vector3d(0.381, 0.2, 0.03),
+      Eigen::Quaterniond(Eigen::AngleAxisd(
+          0.1001, Eigen::Vector3d::UnitX())),
+      0.03, 0.003, 0.10));
+  EXPECT_FALSE(IsXarmFullSamplingC3ObjectUpright(
+      Eigen::Vector3d(0.381, 0.2, 0.0331), Eigen::Quaterniond::Identity(),
+      0.03, 0.003, 0.10));
+}
+
 TEST(XarmFullSamplingC3PlusTest, LateralReserveKeepsActivationMargin) {
   EXPECT_DOUBLE_EQ(FullSamplingC3LateralReserveLimit(0.005, 0.003),
                    0.002);
@@ -232,10 +247,24 @@ TEST(XarmFullSamplingC3PlusTest,
       true, false, false, true, false));
   EXPECT_TRUE(ShouldRetryXarmFullSamplingC3RecoveryResponse(
       true, false, false, false, true));
+  EXPECT_TRUE(ShouldRetryXarmFullSamplingC3RecoveryResponse(
+      true, false, false, false, false, true));
+  EXPECT_TRUE(ShouldRetryXarmFullSamplingC3RecoveryResponse(
+      true, true, false, false, false, true));
   EXPECT_FALSE(ShouldRetryXarmFullSamplingC3RecoveryResponse(
       false, false, true, false, false));
   EXPECT_FALSE(ShouldRetryXarmFullSamplingC3RecoveryResponse(
       true, true, true, false, false));
+}
+
+TEST(XarmFullSamplingC3PlusTest,
+     EveryReleasedExecutionFailureRequiresMeasuredReplan) {
+  EXPECT_TRUE(ShouldReplanXarmFullSamplingC3ReleasedExecutionFailure(
+      true, true));
+  EXPECT_FALSE(ShouldReplanXarmFullSamplingC3ReleasedExecutionFailure(
+      true, false));
+  EXPECT_FALSE(ShouldReplanXarmFullSamplingC3ReleasedExecutionFailure(
+      false, true));
 }
 
 TEST(XarmFullSamplingC3PlusTest,
@@ -976,6 +1005,32 @@ TEST(XarmFullSamplingC3PlusTest,
   EXPECT_TRUE(sufficient.sufficient);
   EXPECT_THROW(EvaluateXarmFullSamplingC3TerminalBudgetSufficiency(
                    8001, 8000, estimate),
+               std::invalid_argument);
+}
+
+TEST(XarmFullSamplingC3PlusTest,
+     Gate100RequiresBothUnchangedOpenTableTolerances) {
+  const Eigen::Vector3d goal(0.381, -0.4, 3.1416);
+  const auto pass = EvaluateXarmFullSamplingC3OpenTableTerminal(
+      Eigen::Vector3d(0.401, -0.37, -3.091585307179586), goal,
+      0.05, 0.10);
+  EXPECT_TRUE(pass.translation_accepted);
+  EXPECT_TRUE(pass.orientation_accepted);
+  EXPECT_TRUE(pass.accepted);
+
+  const auto translation_fail = EvaluateXarmFullSamplingC3OpenTableTerminal(
+      Eigen::Vector3d(0.4311, -0.4, 3.1416), goal, 0.05, 0.10);
+  EXPECT_FALSE(translation_fail.translation_accepted);
+  EXPECT_TRUE(translation_fail.orientation_accepted);
+  EXPECT_FALSE(translation_fail.accepted);
+
+  const auto orientation_fail = EvaluateXarmFullSamplingC3OpenTableTerminal(
+      Eigen::Vector3d(0.381, -0.4, 3.0415), goal, 0.05, 0.10);
+  EXPECT_TRUE(orientation_fail.translation_accepted);
+  EXPECT_FALSE(orientation_fail.orientation_accepted);
+  EXPECT_FALSE(orientation_fail.accepted);
+  EXPECT_THROW(EvaluateXarmFullSamplingC3OpenTableTerminal(
+                   Eigen::Vector3d::Zero(), goal, 0.0, 0.10),
                std::invalid_argument);
 }
 
