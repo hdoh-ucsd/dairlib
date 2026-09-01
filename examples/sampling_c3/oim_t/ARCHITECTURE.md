@@ -550,3 +550,9 @@ Corrective recovery shares primary recovery's fail-closed anchor ladder:
 fixed neutral, measured in-place, candidate overhead, then measured-vertical
 clearance-height de-elevation. Each path logs its provenance and keeps posture
 IK plus swept whole-capsule/table clearance mandatory.
+
+Extended terminal attempts are separate experiments, never redefinitions of
+the 8,000-step benchmark. Gate 57 showed why: it stopped early at a periodic
+joint winding, not at the requested budget. Periodic posture-IK results must be
+represented in the equivalent joint-angle branch nearest measured state before
+the existing velocity-limited interpolation is formed.

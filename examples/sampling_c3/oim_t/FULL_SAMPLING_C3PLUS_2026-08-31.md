@@ -1341,3 +1341,27 @@ activation-pending. The controller again reaches only the honest budget defer.
 Gate 57 is therefore a separately labeled 40,000-update terminal attempt,
 chosen above the live optimistic lower bound. The canonical 8,000-step
 benchmark remains unchanged and failed.
+
+## Gate 57 — extended-budget physical fall-through
+
+The 40,000-update terminal attempt was explicitly labeled as an extended run;
+it did not change YAML or defaults. It stopped after only 3,901 updates, proving
+that budget was not yet the active limit. A nonlinear posture solve selected a
+kinematically equivalent joint-1 winding near `-2*pi`; joint 2 simultaneously
+reached its lower limit, leaving every recovery anchor without position IK.
+
+```text
+source commit:                    4d2deefd
+config/settings/tolerances:       unchanged
+physical output:                  /root/push_anything_ADMM/results/xarm6_terminal_attempt_40000_GsOIbG
+requested updates / used:         40000 / 3901
+terminal measured q1 / q2:        -6.28318 / -2.0 rad
+measured productive cycles:       1
+simulator terminal:               FAIL (0.775869 m / 2.98699 rad)
+```
+
+Gate 57 is a failed terminal attempt and a passed diagnostic gate. Gate 58
+must canonicalize periodic revolute IK solutions to the equivalent angle
+nearest the measured configuration before velocity-bounded stepping, avoiding
+an unnecessary winding to the joint-limit boundary without changing the
+requested Cartesian posture or joint limits.
