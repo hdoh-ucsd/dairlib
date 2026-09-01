@@ -1922,4 +1922,22 @@ EstimateXarmFullSamplingC3TerminalBudget(
   return estimate;
 }
 
+XarmFullSamplingC3TerminalBudgetSufficiencyReceipt
+EvaluateXarmFullSamplingC3TerminalBudgetSufficiency(
+    int updates_used, int update_budget,
+    const XarmFullSamplingC3TerminalBudgetEstimate& estimate) {
+  if (updates_used < 0 || update_budget <= 0 ||
+      updates_used > update_budget || estimate.optimistic_remaining_updates < 0) {
+    throw std::invalid_argument(
+        "terminal budget sufficiency inputs are invalid");
+  }
+  XarmFullSamplingC3TerminalBudgetSufficiencyReceipt receipt;
+  receipt.remaining_updates = update_budget - updates_used;
+  receipt.optimistic_required_updates = estimate.optimistic_remaining_updates;
+  receipt.finite_estimate = estimate.finite;
+  receipt.sufficient = estimate.finite &&
+      receipt.remaining_updates >= receipt.optimistic_required_updates;
+  return receipt;
+}
+
 }  // namespace dairlib::oim

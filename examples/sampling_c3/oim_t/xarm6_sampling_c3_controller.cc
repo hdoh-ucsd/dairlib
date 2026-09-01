@@ -5522,6 +5522,30 @@ int DoMain(int argc, char* argv[]) {
                         post_recovery_progress.terminal.orientation_progress,
                         full_execution_updates -
                             progress_cycle_entry_updates});
+                    const auto live_budget_estimate =
+                        EstimateXarmFullSamplingC3TerminalBudget(
+                            post_recovery_pose, params.object.goal_pose,
+                            params.task.translation_tolerance,
+                            params.task.orientation_tolerance,
+                            measured_productive_cycles);
+                    const auto budget_sufficiency =
+                        EvaluateXarmFullSamplingC3TerminalBudgetSufficiency(
+                            full_execution_updates,
+                            FLAGS_full_execution_steps,
+                            live_budget_estimate);
+                    std::cout <<
+                        "full_sampling_c3plus_terminal_budget_sufficiency="
+                              << (budget_sufficiency.sufficient ? "PASS" :
+                                  "FAIL")
+                              << " remaining_updates="
+                              << budget_sufficiency.remaining_updates
+                              << " optimistic_required_updates="
+                              << budget_sufficiency
+                                     .optimistic_required_updates
+                              << " finite_estimate="
+                              << budget_sufficiency.finite_estimate
+                              << " necessary_not_sufficient=1"
+                              << std::endl;
                     ++progress_cycle_count;
                     live_execution_rejections.clear();
                     if (!progress_lateral_rejected) {

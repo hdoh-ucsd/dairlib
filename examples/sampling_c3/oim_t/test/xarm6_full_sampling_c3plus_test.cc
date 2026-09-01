@@ -850,5 +850,25 @@ TEST(XarmFullSamplingC3PlusTest,
   EXPECT_EQ(estimate.optimistic_remaining_updates, 40291);
 }
 
+TEST(XarmFullSamplingC3PlusTest,
+     TerminalBudgetSufficiencyIsNecessaryButNotTerminalSuccess) {
+  XarmFullSamplingC3TerminalBudgetEstimate estimate;
+  estimate.finite = true;
+  estimate.optimistic_remaining_updates = 32798;
+  const auto insufficient =
+      EvaluateXarmFullSamplingC3TerminalBudgetSufficiency(
+          6369, 8000, estimate);
+  EXPECT_EQ(insufficient.remaining_updates, 1631);
+  EXPECT_FALSE(insufficient.sufficient);
+
+  const auto sufficient =
+      EvaluateXarmFullSamplingC3TerminalBudgetSufficiency(
+          6369, 39167, estimate);
+  EXPECT_TRUE(sufficient.sufficient);
+  EXPECT_THROW(EvaluateXarmFullSamplingC3TerminalBudgetSufficiency(
+                   8001, 8000, estimate),
+               std::invalid_argument);
+}
+
 }  // namespace
 }  // namespace dairlib::oim

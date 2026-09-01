@@ -534,3 +534,8 @@ Restoring x may temporarily spend no more than the unchanged terminal
 translation and orientation tolerances. This does not create task progress:
 the subsequent measured post-recovery receipt remains strictly nonregressive
 in both global task components before productive-cycle provenance is granted.
+
+Every productive-cycle receipt also produces a live budget-sufficiency
+diagnostic. It compares remaining requested updates against the optimistic
+measurement-derived lower bound. This is observability only: even a PASS is
+not success, and a FAIL does not modify the benchmark or any control gate.

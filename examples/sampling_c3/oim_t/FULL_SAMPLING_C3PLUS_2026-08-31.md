@@ -1262,3 +1262,29 @@ credited cycle passed the strict measured nonregression check. The next gate
 must expose whether a requested terminal-run budget is sufficient for the
 measurement-derived optimistic lower bound; the 8,000-step benchmark must
 remain an honest expected failure.
+
+## Gate 54 — live terminal-budget sufficiency receipt
+
+After every measured productive cycle, the controller now compares remaining
+requested updates with Gate 51's optimistic lower bound. A PASS is documented
+as necessary but not sufficient for success; the receipt does not change cycle
+admission or terminal acceptance.
+
+```text
+source commit:                    e4e21ebb
+config/settings/tolerances:       unchanged
+focused tests / live build:       PASS / PASS
+physical output:                  /root/push_anything_ADMM/results/xarm6_budget_sufficiency_8000_WYpHGc
+remaining requested updates:      5839
+optimistic required updates:      96624
+budget sufficiency:               FAIL (expected)
+simulator terminal:               FAIL (0.773285 m / 3.07183 rad)
+```
+
+Gate 54 passes activation and prevents an 8,000-step run from being mistaken
+for a credible terminal attempt. The physical trace also exposes Gate 55:
+after the first productive cycle, all component-decomposed yaw candidates
+predicted only 0.7--1.2 mm of temporary translation debt and were rejected by
+the strict intermediate two-component Pareto gate. Candidate admission needs
+a bounded task-component transaction while measured progress credit remains
+strictly Pareto.

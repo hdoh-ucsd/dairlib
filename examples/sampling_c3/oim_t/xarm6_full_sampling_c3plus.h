@@ -579,6 +579,13 @@ struct XarmFullSamplingC3TerminalBudgetEstimate {
   int64_t optimistic_remaining_updates{};
 };
 
+struct XarmFullSamplingC3TerminalBudgetSufficiencyReceipt {
+  int remaining_updates{};
+  int64_t optimistic_required_updates{};
+  bool finite_estimate{};
+  bool sufficient{};
+};
+
 // Produces an explicit optimistic lower bound, not a success prediction: it
 // combines the best observed progress in each task component with the cheapest
 // complete productive cycle and the unchanged terminal tolerances.
@@ -588,5 +595,13 @@ EstimateXarmFullSamplingC3TerminalBudget(
     const Eigen::Vector3d& goal_object_pose,
     double translation_tolerance, double orientation_tolerance,
     const std::vector<XarmFullSamplingC3MeasuredCycleReceipt>& cycles);
+
+// A PASS is necessary, never sufficient, for terminal success. This compares
+// a requested run budget with the measured optimistic lower bound and does not
+// alter per-cycle admission or terminal acceptance.
+XarmFullSamplingC3TerminalBudgetSufficiencyReceipt
+EvaluateXarmFullSamplingC3TerminalBudgetSufficiency(
+    int updates_used, int update_budget,
+    const XarmFullSamplingC3TerminalBudgetEstimate& estimate);
 
 }  // namespace dairlib::oim
