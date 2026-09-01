@@ -1617,3 +1617,28 @@ descent solve; later candidates were either nonpositive transactions or not
 live-executable. Gate 68 must allow the existing home-seeded nonlinear IK
 fallback during descend/contact, retaining measured-error improvement and
 whole-capsule clearance checks.
+
+## Gate 68 — home-seeded descend/contact IK fallback
+
+The existing home-seeded nonlinear posture fallback now applies to descend and
+contact phases as well as verticalization. Any fallback result is still moved
+to the measured periodic branch, velocity-step bounded, swept for whole-capsule
+clearance, and required to improve measured tip/axis error. Rejection logs now
+separate solver failure from each clearance component.
+
+```text
+source commit:                    52a0ce50
+config/settings/tolerances:       unchanged
+focused tests / live build:       PASS / PASS
+physical output:                  /root/push_anything_ADMM/results/xarm6_descent_home_seed_40000_T2IS4w
+home-seed activation:             pending
+strict terminal transaction:      PASS (0.006735 m / 0.093843 rad)
+lateral error / reserve:          0.003047 m / 0.002000 m
+simulator terminal:               FAIL (0.791126 m / 3.03629 rad)
+```
+
+Gate 68 is implemented but activation-pending. This run instead exposed a
+continuation gap: a released pose inside the unchanged 5 mm lateral corridor
+and with strict positive task progress missed only the 2 mm productive-credit
+reserve. Gate 69 must allow bounded replanning from that pose without granting
+productive credit or weakening the reserve.

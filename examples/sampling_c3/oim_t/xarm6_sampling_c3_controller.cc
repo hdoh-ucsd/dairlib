@@ -2402,7 +2402,9 @@ int DoMain(int argc, char* argv[]) {
               }
             } else {
               const bool allow_home_seed_fallback =
-                  phase.find("verticalize") != std::string::npos;
+                  phase.find("verticalize") != std::string::npos ||
+                  phase.find("descend") != std::string::npos ||
+                  phase.find("contact") != std::string::npos;
               const auto posture = SolveVerticalContactPostureStep(
                   acquisition_plant, acquisition_context.get(), params,
                   current_q, command_tip, object_pose, sample,
@@ -2412,7 +2414,16 @@ int DoMain(int argc, char* argv[]) {
                     "full_sampling_c3plus_posture_step=REJECT phase="
                           << phase << " command_tip_W="
                           << command_tip.transpose()
-                          << " contact_ik=" << posture.finite << std::endl;
+                          << " contact_ik_solved=" << posture.ik_solved
+                          << " swept_clear=" << posture.receipt.clear()
+                          << " shaft_clear="
+                          << posture.receipt.shaft_t_clear
+                          << " capsule_table_clear="
+                          << posture.receipt.capsule_table_clear
+                          << " tip_table_clear="
+                          << posture.receipt.tip_table_clear
+                          << " home_seed_allowed="
+                          << allow_home_seed_fallback << std::endl;
                 return false;
               }
               if (posture.home_seed_fallback) {

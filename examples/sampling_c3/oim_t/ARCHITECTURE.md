@@ -603,3 +603,8 @@ Released recovery failures use one retry transaction. Corridor crossing,
 wrong-polarity motion, and contact loss can all invalidate a candidate, but
 only after clearance is physically measured and lateral recovery is still
 absent.
+
+Nonlinear vertical posture solving may retry from the canonical home seed in
+verticalize, descend, and contact phases. The returned solution receives the
+same nearest-measured periodic representation, bounded step, measured progress
+check, and swept whole-capsule clearance as a measured-seed solution.
