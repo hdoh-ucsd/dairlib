@@ -513,4 +513,43 @@ XarmFullSamplingC3ParetoWrenchReceipt EvaluateXarmFullSamplingC3ParetoWrench(
     double desired_translation_direction, double force_translation_component,
     double desired_orientation_direction, double planar_moment);
 
+struct XarmFullSamplingC3LateralRecoveryReceipt {
+  double lateral_error{};
+  double lateral_reduction{};
+  double translation_progress{};
+  double orientation_debt{};
+  double normalized_magnitude{};
+  bool lateral_restored{};
+  bool translation_nonregressive{};
+  bool orientation_debt_bounded{};
+  bool accepted{};
+};
+
+// A recovery transaction may temporarily spend at most the unchanged terminal
+// orientation tolerance only when it predicts restoration of the existing
+// lateral corridor and preserves global translation descent over the complete
+// cycle. Measured post-recovery acceptance remains a separate authority.
+XarmFullSamplingC3LateralRecoveryReceipt
+EvaluateXarmFullSamplingC3LateralRecovery(
+    const Eigen::Vector3d& cycle_start_object_pose,
+    const Eigen::Vector3d& rejected_object_pose,
+    const Eigen::Vector3d& recovery_terminal_object_pose,
+    const Eigen::Vector3d& goal_object_pose,
+    double translation_tolerance, double orientation_tolerance,
+    double lateral_drift_tolerance);
+
+struct XarmFullSamplingC3LateralEntryReceipt {
+  bool accepted{};
+  int state_knot{-1};
+  Eigen::Vector3d object_pose{Eigen::Vector3d::Zero()};
+};
+
+// Returns the first predicted state inside the unchanged object-x corridor.
+// Recovery execution already stops on this measured event; selection must not
+// judge a later five-knot overshoot as though it were the commanded endpoint.
+XarmFullSamplingC3LateralEntryReceipt
+FindXarmFullSamplingC3LateralCorridorEntry(
+    const XarmFullSamplingC3CandidateReceipt& candidate,
+    double goal_object_x, double lateral_drift_tolerance);
+
 }  // namespace dairlib::oim

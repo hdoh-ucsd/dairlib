@@ -509,3 +509,10 @@ translation and orientation alignment products must both be nonnegative and
 at least one strictly positive. A yaw-helpful contact cannot be admitted when
 its normal force opposes required translation, or vice versa; no force or
 moment magnitude threshold is added.
+
+Lateral recovery is event-aligned. Candidate prediction stops at the first
+state inside the unchanged x corridor, as physical dwell already does, instead
+of judging a later horizon overshoot. Selection requires corridor restoration,
+global translation nonregression, and orientation debt no larger than the
+unchanged terminal orientation tolerance. Measured post-recovery Pareto and
+2 mm reserve receipts remain the authority for productive-cycle credit.

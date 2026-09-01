@@ -1744,4 +1744,98 @@ XarmFullSamplingC3ParetoWrenchReceipt EvaluateXarmFullSamplingC3ParetoWrench(
   return receipt;
 }
 
+XarmFullSamplingC3LateralRecoveryReceipt
+EvaluateXarmFullSamplingC3LateralRecovery(
+    const Eigen::Vector3d& cycle_start_object_pose,
+    const Eigen::Vector3d& rejected_object_pose,
+    const Eigen::Vector3d& recovery_terminal_object_pose,
+    const Eigen::Vector3d& goal_object_pose,
+    double translation_tolerance, double orientation_tolerance,
+    double lateral_drift_tolerance) {
+  if (!cycle_start_object_pose.allFinite() ||
+      !rejected_object_pose.allFinite() ||
+      !recovery_terminal_object_pose.allFinite() ||
+      !goal_object_pose.allFinite() ||
+      !std::isfinite(translation_tolerance) ||
+      !std::isfinite(orientation_tolerance) ||
+      !std::isfinite(lateral_drift_tolerance) ||
+      translation_tolerance <= 0.0 || orientation_tolerance <= 0.0 ||
+      lateral_drift_tolerance <= 0.0) {
+    throw std::invalid_argument("lateral recovery inputs are invalid");
+  }
+  auto wrap = [](double angle) {
+    return std::atan2(std::sin(angle), std::cos(angle));
+  };
+  XarmFullSamplingC3LateralRecoveryReceipt receipt;
+  const double rejected_lateral_error = std::abs(
+      rejected_object_pose.x() - goal_object_pose.x());
+  receipt.lateral_error = std::abs(
+      recovery_terminal_object_pose.x() - goal_object_pose.x());
+  receipt.lateral_reduction =
+      rejected_lateral_error - receipt.lateral_error;
+  const double cycle_start_translation_error =
+      (cycle_start_object_pose.head<2>() -
+       goal_object_pose.head<2>()).norm();
+  const double recovery_translation_error =
+      (recovery_terminal_object_pose.head<2>() -
+       goal_object_pose.head<2>()).norm();
+  receipt.translation_progress =
+      cycle_start_translation_error - recovery_translation_error;
+  const double cycle_start_orientation_error = std::abs(wrap(
+      goal_object_pose.z() - cycle_start_object_pose.z()));
+  const double recovery_orientation_error = std::abs(wrap(
+      goal_object_pose.z() - recovery_terminal_object_pose.z()));
+  receipt.orientation_debt =
+      recovery_orientation_error - cycle_start_orientation_error;
+  receipt.lateral_restored =
+      receipt.lateral_error <= lateral_drift_tolerance &&
+      receipt.lateral_reduction > 0.0;
+  receipt.translation_nonregressive = receipt.translation_progress >= 0.0;
+  receipt.orientation_debt_bounded =
+      receipt.orientation_debt <= orientation_tolerance;
+  receipt.accepted = receipt.lateral_restored &&
+      receipt.translation_nonregressive && receipt.orientation_debt_bounded;
+  receipt.normalized_magnitude =
+      receipt.lateral_reduction / lateral_drift_tolerance +
+      receipt.translation_progress / translation_tolerance -
+      std::max(0.0, receipt.orientation_debt) / orientation_tolerance;
+  return receipt;
+}
+
+XarmFullSamplingC3LateralEntryReceipt
+FindXarmFullSamplingC3LateralCorridorEntry(
+    const XarmFullSamplingC3CandidateReceipt& candidate,
+    double goal_object_x, double lateral_drift_tolerance) {
+  if (!std::isfinite(goal_object_x) ||
+      !std::isfinite(lateral_drift_tolerance) ||
+      lateral_drift_tolerance < 0.0) {
+    throw std::invalid_argument("lateral entry inputs are invalid");
+  }
+  XarmFullSamplingC3LateralEntryReceipt receipt;
+  for (int knot = 1;
+       knot < static_cast<int>(
+                  candidate.solve.dynamic_state_trajectory.size());
+       ++knot) {
+    const Eigen::VectorXd& encoded =
+        candidate.solve.dynamic_state_trajectory[knot];
+    if (encoded.size() != XarmFullSamplingC3State::kSize ||
+        !encoded.allFinite()) {
+      return {};
+    }
+    const auto state = XarmFullSamplingC3State::Decode(encoded);
+    if (std::abs(state.object_position_W.x() - goal_object_x) >
+        lateral_drift_tolerance) {
+      continue;
+    }
+    const Eigen::Matrix3d R_WO =
+        state.object_quaternion_WO.toRotationMatrix();
+    receipt.object_pose.head<2>() = state.object_position_W.head<2>();
+    receipt.object_pose.z() = std::atan2(R_WO(1, 0), R_WO(0, 0));
+    receipt.state_knot = knot;
+    receipt.accepted = receipt.object_pose.allFinite();
+    return receipt;
+  }
+  return receipt;
+}
+
 }  // namespace dairlib::oim

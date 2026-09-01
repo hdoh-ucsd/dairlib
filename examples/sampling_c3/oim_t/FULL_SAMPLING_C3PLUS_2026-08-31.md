@@ -1154,3 +1154,30 @@ exited the lateral corridor by 6.285 mm. Every corrective proposal then failed
 strict global two-component Pareto prediction, leaving no recovery. Gate 50
 must admit a bounded lateral-restoration transaction while keeping final
 global tolerance and measured post-recovery acceptance unchanged.
+
+## Gate 50 — first-entry bounded lateral recovery
+
+Recovery may spend at most the unchanged 0.10 rad orientation tolerance only
+when its prediction restores the unchanged 5 mm x corridor and preserves
+global translation over the full cycle. Selection evaluates the first
+predicted corridor-entry knot, matching the event-driven stop already used by
+physical execution, rather than rejecting a later five-knot overshoot.
+
+```text
+source commit:                    6a2d7411
+config/settings/tolerances:       unchanged
+negative output:                 /root/push_anything_ADMM/results/xarm6_bounded_lateral_recovery_8000_QonInM
+passing output:                  /root/push_anything_ADMM/results/xarm6_lateral_entry_recovery_8000_vRIO5g
+first-entry recovery live IK:     4 PASS
+measured 2 mm reserve recovery:   4 PASS
+honest productive cycles:         3
+measured budget defer:            2103 remaining / 2277 required
+simulator terminal:               FAIL (0.734567 m / 2.99524 rad)
+```
+
+Gate 50 passes. It also physically proves Gate 47: cumulative productive
+handoff survives a later safe defer and is reported separately from global
+task failure. The remaining 0.735 m distance cannot be closed at the measured
+cycle throughput within 8,000 updates. Gate 51 must quantify a lower-bound
+terminal update budget from observed task progress and complete-cycle cost;
+it must not relabel the 8,000-update benchmark as success.

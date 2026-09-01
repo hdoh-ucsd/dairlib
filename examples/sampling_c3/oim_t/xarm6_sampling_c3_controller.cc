@@ -4522,15 +4522,18 @@ int DoMain(int argc, char* argv[]) {
                         [&](const auto& candidate) {
                           XarmFullSamplingC3ResponseConditioningReceipt
                               receipt;
-                          const auto terminal =
-                              candidate_terminal_pose(candidate);
-                          if (!terminal.has_value()) {
+                          const auto entry =
+                              FindXarmFullSamplingC3LateralCorridorEntry(
+                                  candidate, params.object.goal_pose.x(),
+                                  params.controller
+                                      .lateral_drift_tolerance);
+                          if (!entry.accepted) {
                             receipt.ranking_class = 2;
                             return receipt;
                           }
                           return
                               EvaluateFullSamplingC3EquivariantResponseConditioning(
-                                  progress_end_pose, *terminal,
+                                  progress_end_pose, entry.object_pose,
                                   candidate.sample_point_O,
                                   candidate.sample_normal_O,
                                   params.object.goal_pose,
@@ -4545,42 +4548,50 @@ int DoMain(int argc, char* argv[]) {
                         };
                     auto has_cycle_task_nonregression =
                         [&](const auto& candidate) {
-                          const auto terminal =
-                              candidate_terminal_pose(candidate);
-                          if (!terminal.has_value()) return false;
+                          const auto entry =
+                              FindXarmFullSamplingC3LateralCorridorEntry(
+                                  candidate, params.object.goal_pose.x(),
+                                  params.controller
+                                      .lateral_drift_tolerance);
+                          if (!entry.accepted) return false;
                           const auto conditioning =
                               condition_cycle_candidate(candidate);
                           const Eigen::Vector3d& ranked_terminal =
                               conditioning.ranking_class == 0
                                   ? conditioning
                                         .corrected_terminal_object_pose
-                                  : *terminal;
-                          return EvaluateFullSamplingC3NormalizedParetoDescent(
-                              progress_start_pose, ranked_terminal,
-                              params.object.goal_pose,
+                                  : entry.object_pose;
+                          return EvaluateXarmFullSamplingC3LateralRecovery(
+                              progress_start_pose, progress_end_pose,
+                              ranked_terminal, params.object.goal_pose,
                               params.task.translation_tolerance,
-                              params.task.orientation_tolerance)
-                              .terminal.accepted;
+                              params.task.orientation_tolerance,
+                              params.controller.lateral_drift_tolerance)
+                              .accepted;
                         };
                     auto cycle_task_descent_magnitude =
                         [&](const auto& candidate) {
-                          const auto terminal =
-                              candidate_terminal_pose(candidate);
-                          if (!terminal.has_value()) {
+                          const auto entry =
+                              FindXarmFullSamplingC3LateralCorridorEntry(
+                                  candidate, params.object.goal_pose.x(),
+                                  params.controller
+                                      .lateral_drift_tolerance);
+                          if (!entry.accepted) {
                             return -std::numeric_limits<double>::infinity();
                           }
                           const auto descent =
-                              EvaluateFullSamplingC3NormalizedParetoDescent(
-                                  progress_start_pose,
+                              EvaluateXarmFullSamplingC3LateralRecovery(
+                                  progress_start_pose, progress_end_pose,
                                   condition_cycle_candidate(candidate)
                                               .ranking_class == 0
                                       ? condition_cycle_candidate(candidate)
                                             .corrected_terminal_object_pose
-                                      : *terminal,
+                                      : entry.object_pose,
                                   params.object.goal_pose,
                                   params.task.translation_tolerance,
-                                  params.task.orientation_tolerance);
-                          return descent.terminal.accepted
+                                  params.task.orientation_tolerance,
+                                  params.controller.lateral_drift_tolerance);
+                          return descent.accepted
                               ? descent.normalized_magnitude
                               : -std::numeric_limits<double>::infinity();
                         };
@@ -4603,10 +4614,41 @@ int DoMain(int argc, char* argv[]) {
                             }
                             if (!has_cycle_polarity(*candidate)) continue;
                             if (!has_cycle_task_nonregression(*candidate)) {
+                              const auto entry =
+                                  FindXarmFullSamplingC3LateralCorridorEntry(
+                                      *candidate,
+                                      params.object.goal_pose.x(),
+                                      params.controller
+                                          .lateral_drift_tolerance);
+                              XarmFullSamplingC3LateralRecoveryReceipt
+                                  recovery_receipt;
+                              if (entry.accepted) {
+                                recovery_receipt =
+                                    EvaluateXarmFullSamplingC3LateralRecovery(
+                                        progress_start_pose,
+                                        progress_end_pose,
+                                        entry.object_pose,
+                                        params.object.goal_pose,
+                                        params.task.translation_tolerance,
+                                        params.task.orientation_tolerance,
+                                        params.controller
+                                            .lateral_drift_tolerance);
+                              }
                               std::cout <<
                                   "full_sampling_c3plus_cycle_recovery_"
                                   "task_nonregression=REJECT sample="
                                         << candidate->sample_name
+                                        << " corridor_entry_knot="
+                                        << entry.state_knot
+                                        << " lateral_error_m="
+                                        << recovery_receipt.lateral_error
+                                        << " lateral_reduction_m="
+                                        << recovery_receipt.lateral_reduction
+                                        << " translation_progress_m="
+                                        << recovery_receipt
+                                               .translation_progress
+                                        << " orientation_debt_rad="
+                                        << recovery_receipt.orientation_debt
                                         << std::endl;
                               continue;
                             }
@@ -4983,19 +5025,23 @@ int DoMain(int argc, char* argv[]) {
                               "cycle_recovery_contact", false, true, false,
                               true);
                       if (cycle_contacted) {
-                        const auto predicted_terminal =
-                            candidate_terminal_pose(*cycle_candidate);
-                        if (predicted_terminal.has_value()) {
+                        const auto predicted_entry =
+                            FindXarmFullSamplingC3LateralCorridorEntry(
+                                *cycle_candidate,
+                                params.object.goal_pose.x(),
+                                params.controller.lateral_drift_tolerance);
+                        if (predicted_entry.accepted) {
                           selected_cycle_recovery_prediction =
                               EvaluateFullSamplingC3NormalizedParetoDescent(
-                                  progress_start_pose, *predicted_terminal,
+                                  progress_start_pose,
+                                  predicted_entry.object_pose,
                                   params.object.goal_pose,
                                   params.task.translation_tolerance,
                                   params.task.orientation_tolerance);
                           XarmFullSamplingC3MeasuredResponse observation;
                           observation.start_object_pose = cycle_attempt_pose;
                           observation.predicted_terminal_object_pose =
-                              *predicted_terminal;
+                              predicted_entry.object_pose;
                           observation.sample_point_O =
                               cycle_candidate->sample_point_O;
                           observation.sample_normal_O =
@@ -5007,6 +5053,8 @@ int DoMain(int argc, char* argv[]) {
                               "full_sampling_c3plus_cycle_recovery_"
                               "predicted_descent=PASS sample="
                                     << cycle_candidate->sample_name
+                                    << " corridor_entry_knot="
+                                    << predicted_entry.state_knot
                                     << " normalized_magnitude="
                                     << selected_cycle_recovery_prediction
                                            ->normalized_magnitude

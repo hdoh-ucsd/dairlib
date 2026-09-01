@@ -763,5 +763,43 @@ TEST(XarmFullSamplingC3PlusTest, ParetoWrenchRejectsOpposingTaskComponent) {
   EXPECT_TRUE(pareto_productive.accepted);
 }
 
+TEST(XarmFullSamplingC3PlusTest,
+     LateralRecoveryUsesUnchangedOrientationDebtBound) {
+  const Eigen::Vector3d goal(0.381, -0.4, M_PI);
+  const Eigen::Vector3d cycle_start(0.381, 0.35, -0.20);
+  const Eigen::Vector3d rejected(0.3873, 0.344, -0.25);
+  const auto bounded = EvaluateXarmFullSamplingC3LateralRecovery(
+      cycle_start, rejected, Eigen::Vector3d(0.384, 0.34, -0.15), goal,
+      0.05, 0.10, 0.005);
+  EXPECT_TRUE(bounded.lateral_restored);
+  EXPECT_TRUE(bounded.translation_nonregressive);
+  EXPECT_TRUE(bounded.orientation_debt_bounded);
+  EXPECT_TRUE(bounded.accepted);
+
+  const auto excessive_debt = EvaluateXarmFullSamplingC3LateralRecovery(
+      cycle_start, rejected, Eigen::Vector3d(0.384, 0.34, -0.05), goal,
+      0.05, 0.10, 0.005);
+  EXPECT_FALSE(excessive_debt.orientation_debt_bounded);
+  EXPECT_FALSE(excessive_debt.accepted);
+}
+
+TEST(XarmFullSamplingC3PlusTest,
+     LateralRecoveryUsesFirstCorridorEntryBeforeOvershoot) {
+  XarmFullSamplingC3CandidateReceipt candidate;
+  auto make_state = [](double object_x) {
+    XarmFullSamplingC3State state;
+    state.object_quaternion_WO = Eigen::Quaterniond::Identity();
+    state.object_position_W = Eigen::Vector3d(object_x, 0.35, 0.0298);
+    return state.Encode();
+  };
+  candidate.solve.dynamic_state_trajectory = {
+      make_state(0.375), make_state(0.379), make_state(0.410)};
+  const auto entry = FindXarmFullSamplingC3LateralCorridorEntry(
+      candidate, 0.381, 0.005);
+  EXPECT_TRUE(entry.accepted);
+  EXPECT_EQ(entry.state_knot, 1);
+  EXPECT_DOUBLE_EQ(entry.object_pose.x(), 0.379);
+}
+
 }  // namespace
 }  // namespace dairlib::oim
