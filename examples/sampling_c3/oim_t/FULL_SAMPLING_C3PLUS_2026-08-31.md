@@ -1516,3 +1516,29 @@ from their winding limits. The canonical run ends only at its honest budget
 defer, with an optimistic 34,472 additional updates required. Gate 64 is a
 separately labeled 40,000-update fall-through to exercise the scoped guard and
 Gate 60 bounded continuation after larger measured yaw transitions.
+
+## Gate 64 — scoped-conformance extended fall-through
+
+The separately labeled 40,000-update run reached twelve strict productive
+cycles and 21,814 measured updates without periodic winding. It stopped before
+the budget on a recovery candidate whose corridor transaction passed but whose
+predicted terminal tolerance-normalized task descent was negative.
+
+```text
+source commit:                    676e69b0
+config/settings/tolerances:       unchanged
+physical output:                  /root/push_anything_ADMM/results/xarm6_scoped_terminal_40000_7XX5n7
+requested / used updates:         40000 / 21814
+measured productive cycles:       12
+measured q1 range:                [-0.168219, 0.898037] rad
+measured q2 range:                [-0.998504, 0.758852] rad
+last predicted normalized descent:-0.535660
+last measured normalized descent: -0.421531
+simulator terminal:               FAIL (0.620622 m / 2.05269 rad)
+```
+
+Gate 64 passes the scoped-winding objective and exposes a candidate-admission
+gap. Bounded corridor restoration may spend component debt, but Gate 55
+already requires its total terminal normalized transaction to remain positive.
+Gate 65 must apply that receipt before live IK and physical contact, not only
+after recovery has already spent thousands of updates.
