@@ -3169,8 +3169,20 @@ int DoMain(int argc, char* argv[]) {
                     progress_buffer.successful.begin(),
                     progress_buffer.successful.end(),
                     [&](const auto& a, const auto& b) {
-                      return condition_candidate(a).ranking_class <
-                          condition_candidate(b).ranking_class;
+                      const auto a_response = condition_candidate(a);
+                      const auto b_response = condition_candidate(b);
+                      if (a_response.ranking_class !=
+                          b_response.ranking_class) {
+                        return a_response.ranking_class <
+                            b_response.ranking_class;
+                      }
+                      if (a_response.ranking_class == 0 &&
+                          a_response.calibrated_normalized_magnitude !=
+                              b_response.calibrated_normalized_magnitude) {
+                        return a_response.calibrated_normalized_magnitude >
+                            b_response.calibrated_normalized_magnitude;
+                      }
+                      return false;
                     });
                 std::array<int, 3> response_rank_counts{0, 0, 0};
                 for (const auto& candidate : progress_buffer.successful) {
@@ -3349,6 +3361,11 @@ int DoMain(int argc, char* argv[]) {
                             << " corrected_terminal_accepted="
                             << response_conditioning
                                    .corrected_terminal_accepted
+                            << " observed_progress_gain="
+                            << response_conditioning.observed_progress_gain
+                            << " calibrated_normalized_magnitude="
+                            << response_conditioning
+                                   .calibrated_normalized_magnitude
                             << " ranking_lateral_m="
                             << response_conditioned_lateral
                             << " wrench_productive="

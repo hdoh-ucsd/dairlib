@@ -333,6 +333,8 @@ TEST(XarmFullSamplingC3PlusTest,
   EXPECT_TRUE(preferred.corrected_lateral_accepted);
   EXPECT_TRUE(preferred.corrected_terminal_object_pose.isApprox(
       compatible.measured_terminal_object_pose));
+  EXPECT_NEAR(preferred.observed_progress_gain, 1.5, 1.0e-12);
+  EXPECT_NEAR(preferred.calibrated_normalized_magnitude, 0.9, 1.0e-12);
 
   XarmFullSamplingC3MeasuredResponse incompatible = compatible;
   incompatible.measured_terminal_object_pose =

@@ -393,6 +393,8 @@ EvaluateFullSamplingC3MeasuredResponseConditioning(
   };
   const Eigen::Vector2d candidate_normal = sample_normal_O.normalized();
   XarmFullSamplingC3ResponseConditioningReceipt receipt;
+  double predicted_normalized_progress_sum = 0.0;
+  double measured_normalized_progress_sum = 0.0;
   for (const auto& observation : observations) {
     if (!observation.start_object_pose.allFinite() ||
         !observation.predicted_terminal_object_pose.allFinite() ||
@@ -443,6 +445,21 @@ EvaluateFullSamplingC3MeasuredResponseConditioning(
         observation.start_object_pose,
         observation.measured_terminal_object_pose, goal_object_pose,
         minimum_translation_progress, minimum_orientation_progress);
+    if (translation_neighborhood > 0.0 &&
+        orientation_neighborhood > 0.0) {
+      predicted_normalized_progress_sum +=
+          EvaluateFullSamplingC3NormalizedParetoDescent(
+              observation.start_object_pose,
+              observation.predicted_terminal_object_pose,
+              goal_object_pose, translation_neighborhood,
+              orientation_neighborhood).normalized_magnitude;
+      measured_normalized_progress_sum +=
+          EvaluateFullSamplingC3NormalizedParetoDescent(
+              observation.start_object_pose,
+              observation.measured_terminal_object_pose,
+              goal_object_pose, translation_neighborhood,
+              orientation_neighborhood).normalized_magnitude;
+    }
     const bool measured_lateral_accepted =
         std::abs(observation.measured_terminal_object_pose.x() -
                  goal_object_pose.x()) <= lateral_drift_tolerance;
@@ -476,6 +493,19 @@ EvaluateFullSamplingC3MeasuredResponseConditioning(
       receipt.corrected_terminal_object_pose.x() - goal_object_pose.x());
   receipt.corrected_lateral_accepted =
       receipt.corrected_lateral_error <= lateral_drift_tolerance;
+  if (receipt.matching_observations > 0 &&
+      std::abs(predicted_normalized_progress_sum) >
+          std::numeric_limits<double>::epsilon()) {
+    receipt.observed_progress_gain =
+        measured_normalized_progress_sum /
+        predicted_normalized_progress_sum;
+    receipt.calibrated_normalized_magnitude =
+        EvaluateFullSamplingC3NormalizedParetoDescent(
+            start_object_pose, predicted_terminal_object_pose,
+            goal_object_pose, translation_neighborhood,
+            orientation_neighborhood).normalized_magnitude *
+        receipt.observed_progress_gain;
+  }
   if (receipt.matching_observations == 0) {
     receipt.ranking_class = 1;
   } else if (receipt.compatible_observations ==

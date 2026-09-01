@@ -497,3 +497,9 @@ remains a valid closed-loop handoff after a later measured-budget defer, but it
 does not imply open-table success. A pure status evaluator independently emits
 handoff, global terminal acceptance, reason, and process return code; a defer
 without any productive cycle remains fail-closed.
+
+Primary response conditioning also exposes a dimensionless physical
+productivity gain: accumulated measured normalized Pareto descent divided by
+the corresponding C3+ prediction. Compatible candidates are ordered by the
+gain-calibrated magnitude; unseen exploration and incompatible quarantine keep
+their existing evidence-class precedence and all geometric gates still apply.

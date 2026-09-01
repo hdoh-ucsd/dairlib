@@ -212,6 +212,11 @@ struct XarmFullSamplingC3ResponseConditioningReceipt {
   Eigen::Vector3d mean_prediction_residual{Eigen::Vector3d::Zero()};
   Eigen::Vector3d corrected_terminal_object_pose{Eigen::Vector3d::Zero()};
   double corrected_lateral_error{};
+  // Dimensionless task descent uses the unchanged translation and
+  // orientation tolerances. The gain is measured/predicted local descent;
+  // calibrated magnitude applies that gain to the current candidate.
+  double observed_progress_gain{};
+  double calibrated_normalized_magnitude{};
 };
 
 // Corrects one candidate's predicted terminal displacement with accumulated

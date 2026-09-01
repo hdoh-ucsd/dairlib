@@ -1104,3 +1104,29 @@ rollouts, the remaining limiting behavior is now measured candidate response:
 C3+ frequently predicts order-one yaw descent while the physical T produces
 only hundredths of a radian or the opposite sign. Gate 48 must quantify model
 gain/sign calibration per local contact before ranking another dwell.
+
+## Gate 48 — measured-productivity gain ranking
+
+For each matching primary contact neighborhood, the controller now computes
+measured normalized Pareto descent divided by predicted normalized descent.
+The same unchanged translation/orientation tolerances provide units. Evidence
+class remains the first sort key; only compatible contacts are then ordered by
+their gain-calibrated predicted magnitude. No acceptance or collision gate is
+relaxed.
+
+```text
+source commit:                    378f804d
+config/settings/tolerances:       unchanged
+physical output:                  /root/push_anything_ADMM/results/xarm6_measured_productivity_ranking_8000_UxtbEQ
+nonzero gain candidate receipts:  77
+honest productive cycles:         2
+productive handoff preserved:     PASS
+simulator terminal:               FAIL (0.807974 m / 2.33882 rad)
+```
+
+Gate 48 passes activation. The terminal regression was caused by an unseen
+crossbar-bottom-left contact: its moment had desired yaw polarity, but its
+normal force opposed desired y translation. The current disjunctive wrench
+test admits either component. Gate 49 must apply the same Pareto contract used
+for terminal descent: both wrench components nonregressive and at least one
+strictly productive.
