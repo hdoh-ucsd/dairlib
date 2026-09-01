@@ -5291,9 +5291,10 @@ int DoMain(int argc, char* argv[]) {
                                     << std::endl;
                         }
                       }
-                      bool cycle_contact_loss_retry = false;
+                      bool cycle_response_retry = false;
                       if (cycle_contacted) {
                         bool cycle_cleared = false;
+                        bool cycle_crossing_rejected = false;
                         bool cycle_contact_lost_rejected = false;
                         bool cycle_wrong_polarity_rejected = false;
                         int cycle_recovery_response_steps = 0;
@@ -5345,6 +5346,7 @@ int DoMain(int argc, char* argv[]) {
                               crossed_goal || wrong_polarity_response ||
                               contact_lost) {
                             if (crossed_goal) {
+                              cycle_crossing_rejected = true;
                               std::cout <<
                                   "full_sampling_c3plus_cycle_recovery_"
                                   "crossing=REJECT"
@@ -5446,8 +5448,6 @@ int DoMain(int argc, char* argv[]) {
                                     << std::endl;
                         }
                         if (cycle_contact_lost_rejected) {
-                          cycle_contact_loss_retry =
-                              cycle_cleared && !progress_recovered;
                           std::cout <<
                               "full_sampling_c3plus_cycle_recovery_"
                               "contact_loss_release="
@@ -5455,13 +5455,19 @@ int DoMain(int argc, char* argv[]) {
                                     << " updates=" << full_execution_updates
                                     << std::endl;
                         }
+                        cycle_response_retry =
+                            ShouldRetryXarmFullSamplingC3RecoveryResponse(
+                                cycle_cleared, progress_recovered,
+                                cycle_crossing_rejected,
+                                cycle_wrong_polarity_rejected,
+                                cycle_contact_lost_rejected);
                       }
-                      if (cycle_contacted && !cycle_contact_loss_retry) break;
+                      if (cycle_contacted && !cycle_response_retry) break;
 
                       const std::string failed_cycle_sample =
                           cycle_candidate->sample_name;
                       const char* failed_phase =
-                          cycle_contact_loss_retry ? "contact_response" :
+                          cycle_response_retry ? "contact_response" :
                           !cycle_lifted ? "lift" :
                           !cycle_anchored ? "neutral_anchor" :
                           !cycle_verticalized ? "verticalize" :
@@ -5469,7 +5475,7 @@ int DoMain(int argc, char* argv[]) {
                           !cycle_lowered ? "lower" :
                           !cycle_descended ? "descend" : "contact";
                       bool failed_approach_released =
-                          cycle_contact_loss_retry;
+                          cycle_response_retry;
                       while (!cycle_contacted &&
                              !failed_approach_released &&
                              full_execution_updates <

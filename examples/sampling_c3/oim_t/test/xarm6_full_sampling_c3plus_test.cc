@@ -225,6 +225,20 @@ TEST(XarmFullSamplingC3PlusTest,
 }
 
 TEST(XarmFullSamplingC3PlusTest,
+     ReleasedRecoveryFailuresAllInvalidateAndRetry) {
+  EXPECT_TRUE(ShouldRetryXarmFullSamplingC3RecoveryResponse(
+      true, false, true, false, false));
+  EXPECT_TRUE(ShouldRetryXarmFullSamplingC3RecoveryResponse(
+      true, false, false, true, false));
+  EXPECT_TRUE(ShouldRetryXarmFullSamplingC3RecoveryResponse(
+      true, false, false, false, true));
+  EXPECT_FALSE(ShouldRetryXarmFullSamplingC3RecoveryResponse(
+      false, false, true, false, false));
+  EXPECT_FALSE(ShouldRetryXarmFullSamplingC3RecoveryResponse(
+      true, true, true, false, false));
+}
+
+TEST(XarmFullSamplingC3PlusTest,
      PeriodicIkSolutionUsesEquivalentBranchNearestMeasuredState) {
   const double pi = std::acos(-1.0);
   Eigen::VectorXd solution(3), measured(3), lower(3), upper(3);

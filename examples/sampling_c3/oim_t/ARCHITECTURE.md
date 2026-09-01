@@ -598,3 +598,8 @@ Measured response evidence changes discrete candidate precedence only after a
 matching observation is replicated. The first sample remains fully logged and
 contributes a provisional residual, but cannot alone prefer or quarantine an
 entire equivalent contact neighborhood.
+
+Released recovery failures use one retry transaction. Corridor crossing,
+wrong-polarity motion, and contact loss can all invalidate a candidate, but
+only after clearance is physically measured and lateral recovery is still
+absent.

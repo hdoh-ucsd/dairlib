@@ -135,6 +135,13 @@ EvaluateFullSamplingC3WaypointConformancePersistence(
     bool spatially_conformant, int prior_consecutive_violation_updates,
     int required_consecutive_violation_updates);
 
+// A released physical response that did not restore the lateral reserve must
+// invalidate the candidate and retry, regardless of whether the observed
+// failure was crossing, wrong polarity, or contact loss.
+bool ShouldRetryXarmFullSamplingC3RecoveryResponse(
+    bool release_cleared, bool lateral_recovered, bool crossed_goal,
+    bool wrong_polarity, bool contact_lost);
+
 // Revolute IK may return q +/- 2*pi at identical Cartesian posture. For joints
 // whose declared range contains a complete revolution, select the equivalent
 // in-limit representation nearest measured q before forming a bounded step.

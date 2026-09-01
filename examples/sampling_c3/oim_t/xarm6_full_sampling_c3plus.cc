@@ -264,6 +264,13 @@ EvaluateFullSamplingC3WaypointConformancePersistence(
   return receipt;
 }
 
+bool ShouldRetryXarmFullSamplingC3RecoveryResponse(
+    bool release_cleared, bool lateral_recovered, bool crossed_goal,
+    bool wrong_polarity, bool contact_lost) {
+  return release_cleared && !lateral_recovered &&
+      (crossed_goal || wrong_polarity || contact_lost);
+}
+
 Eigen::VectorXd CanonicalizeXarmPeriodicIkSolutionNearestMeasured(
     const Eigen::VectorXd& solution, const Eigen::VectorXd& measured,
     const Eigen::VectorXd& lower_limits,

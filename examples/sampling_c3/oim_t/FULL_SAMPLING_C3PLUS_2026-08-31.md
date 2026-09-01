@@ -1591,3 +1591,29 @@ quarantine. The next failure crossed the x corridor during contact, was safely
 released, but did not retry because only contact-loss release currently enters
 the fallback loop. Gate 67 must treat released crossing and wrong-polarity
 responses as retryable candidate invalidations too.
+
+## Gate 67 — unified released-response retry
+
+Corridor crossing, measured wrong polarity, and contact loss now share a pure
+retry receipt. A response can invalidate its candidate only after the pusher
+is physically clear and the lateral reserve is still not restored; otherwise
+execution remains fail-closed.
+
+```text
+source commit:                    364ce593
+config/settings/tolerances:       unchanged
+focused tests / live build:       PASS / PASS
+physical output:                  /root/push_anything_ADMM/results/xarm6_recovery_response_retry_40000_jOvR5s
+response-retry activation:        pending (no crossing in this trace)
+acquisition retry activations:    2
+measured productive cycles:       5
+updates used:                     9986
+simulator terminal:               FAIL (0.719903 m / 2.31254 rad)
+```
+
+Gate 67 is implemented and unit-tested. The trace progressed through five
+cycles, then a live-IK-approved recovery repeatedly failed its physical
+descent solve; later candidates were either nonpositive transactions or not
+live-executable. Gate 68 must allow the existing home-seeded nonlinear IK
+fallback during descend/contact, retaining measured-error improvement and
+whole-capsule clearance checks.
