@@ -381,3 +381,13 @@ ordering, OSQP setup/solve ordering, options, and warm-start policy are
 unchanged. The OSC reads the named LCM trajectory block directly rather than
 constructing four temporary trajectory maps; it still builds the identical
 two-sample first-order hold for the tracking input.
+
+Contact-cycle admission now uses one accounting domain. The selected live-IK
+path length is converted from its 50 ms planning discretization into 20 ms
+controller updates, then added to the unchanged physical contact dwell and the
+largest measured release/recovery receipt from the current rollout. A cycle is
+admitted only when the remaining execution budget is strictly larger than this
+sum. Missing measurements and equality fail closed. This guard is downstream
+of candidate selection and live IK but upstream of the first physical lift, so
+budget rejection publishes no partial acquisition command and preserves the
+measured safe hold. It adds no solver, tolerance, cost, horizon, or YAML change.

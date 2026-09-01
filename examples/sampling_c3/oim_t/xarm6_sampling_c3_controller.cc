@@ -2111,6 +2111,7 @@ int DoMain(int argc, char* argv[]) {
       bool contact_cycle_budget_deferred = false;
       if (measured_lateral_rejected &&
           full_execution_updates < FLAGS_full_execution_steps) {
+        const int initial_recovery_start_updates = full_execution_updates;
         auto execute_posture_waypoint = [&](const Eigen::Vector3d& waypoint,
                                             const Eigen::Vector3d& object_pose,
                                             const ContactSample& sample,
@@ -2747,6 +2748,16 @@ int DoMain(int argc, char* argv[]) {
                           << " updates=" << full_execution_updates
                           << std::endl;
               }
+              std::vector<int> measured_release_recovery_updates{
+                  full_execution_updates - initial_recovery_start_updates};
+              std::cout <<
+                  "full_sampling_c3plus_release_recovery_receipt=PASS"
+                        << " phase=initial_corrective"
+                        << " phase_updates="
+                        << measured_release_recovery_updates.back()
+                        << " receipts="
+                        << measured_release_recovery_updates.size()
+                        << std::endl;
               int progress_cycle_count = 0;
               std::string active_release_name =
                   corrective_candidate->sample_name;
@@ -3077,6 +3088,8 @@ int DoMain(int argc, char* argv[]) {
                     acquisition_plant.GetPositions(*acquisition_context);
                 std::vector<XarmFullSamplingC3CandidateReceipt>
                     monitored_progress_candidates;
+                std::optional<FullCandidateAcquisitionReceipt>
+                    selected_progress_acquisition;
                 double monitored_progress_lateral =
                     std::numeric_limits<double>::infinity();
                 auto evaluate_progress_candidates = [&](const auto& candidates) {
@@ -3307,6 +3320,9 @@ int DoMain(int argc, char* argv[]) {
                         progress_neutral_anchor_candidates.insert(
                             candidate.sample_name);
                       }
+                      if (!selected_progress_acquisition.has_value()) {
+                        selected_progress_acquisition = live_receipt;
+                      }
                       progress_execution_buffer.successful.push_back(
                           candidate);
                     } else {
@@ -3398,6 +3414,7 @@ int DoMain(int argc, char* argv[]) {
                         progress_neutral_anchor_candidates.insert(
                             candidate.sample_name);
                       }
+                      selected_progress_acquisition = live_receipt;
                       monitored_progress_candidate = candidate;
                       monitored_progress_lateral = std::abs(
                           candidate.solve
@@ -3463,6 +3480,7 @@ int DoMain(int argc, char* argv[]) {
                     progress_execution_buffer.unsuccessful =
                         replenished.unsuccessful;
                     monitored_progress_candidates.clear();
+                    selected_progress_acquisition.reset();
                     monitored_progress_lateral =
                         std::numeric_limits<double>::infinity();
                     evaluate_progress_candidates(replenished.successful);
@@ -3537,6 +3555,52 @@ int DoMain(int argc, char* argv[]) {
                           << " pusher_knots_W="
                           << progress_plan.pusher_positions_W << std::endl;
                 if (progress_plan.accepted) {
+                  if (!selected_progress_acquisition.has_value()) {
+                    std::cout <<
+                        "full_sampling_c3plus_measured_cycle_budget=FAIL"
+                              << " reason=selected_live_ik_receipt_missing"
+                              << " sample=" << progress_plan.sample_name
+                              << " updates=" << full_execution_updates
+                              << std::endl;
+                    corrective_lateral_recovery = false;
+                    break;
+                  }
+                  const auto measured_cycle_budget =
+                      EvaluateFullSamplingC3CycleBudget(
+                          full_execution_updates,
+                          FLAGS_full_execution_steps,
+                          selected_progress_acquisition->ik_steps,
+                          params.task.planning_time_step,
+                          FLAGS_full_execution_period_ms,
+                          params.controller.successor_minimum_contact_steps,
+                          measured_release_recovery_updates);
+                  std::cout <<
+                      "full_sampling_c3plus_measured_cycle_budget="
+                            << (measured_cycle_budget.accepted ? "PASS" :
+                                "DEFER")
+                            << " sample=" << progress_plan.sample_name
+                            << " updates=" << full_execution_updates
+                            << " budget=" << FLAGS_full_execution_steps
+                            << " remaining_updates="
+                            << measured_cycle_budget.remaining_updates
+                            << " acquisition_ik_steps="
+                            << selected_progress_acquisition->ik_steps
+                            << " acquisition_updates="
+                            << measured_cycle_budget.acquisition_updates
+                            << " contact_dwell_updates="
+                            << measured_cycle_budget.contact_dwell_updates
+                            << " release_recovery_updates="
+                            << measured_cycle_budget.release_recovery_updates
+                            << " measured_receipts="
+                            << measured_cycle_budget
+                                   .measured_release_recovery_receipts
+                            << " required_updates="
+                            << measured_cycle_budget.required_updates
+                            << std::endl;
+                  if (!measured_cycle_budget.accepted) {
+                    contact_cycle_budget_deferred = true;
+                    break;
+                  }
                   ContactFace progress_face = ContactFace::kCrossbarTop;
                   if (progress_plan.sample_name.find("stem_right") !=
                       std::string::npos) {
@@ -3785,6 +3849,8 @@ int DoMain(int argc, char* argv[]) {
                         knot + 1 ==
                             progress_plan.pusher_positions_W.cols();
                   }
+                  const int release_recovery_start_updates =
+                      full_execution_updates;
                   if (progress_lateral_rejected) {
                     live_execution_rejections.insert(
                         progress_plan.sample_name);
@@ -4573,6 +4639,23 @@ int DoMain(int argc, char* argv[]) {
                               << " updates=" << full_execution_updates
                               << std::endl;
                   }
+                  const int measured_release_recovery =
+                      full_execution_updates -
+                      release_recovery_start_updates;
+                  measured_release_recovery_updates.push_back(
+                      measured_release_recovery);
+                  std::cout <<
+                      "full_sampling_c3plus_release_recovery_receipt=PASS"
+                            << " phase=progress_cycle"
+                            << " phase_updates="
+                            << measured_release_recovery
+                            << " receipts="
+                            << measured_release_recovery_updates.size()
+                            << " maximum_updates="
+                            << *std::max_element(
+                                   measured_release_recovery_updates.begin(),
+                                   measured_release_recovery_updates.end())
+                            << std::endl;
                   full_task_progress_cycle = productive_progress &&
                       progress_recovered &&
                       (progress_knots_reached ||

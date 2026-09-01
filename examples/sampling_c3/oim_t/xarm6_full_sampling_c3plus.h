@@ -69,6 +69,29 @@ bool IsFullSamplingC3CentralSideContact(
 bool HasFullSamplingC3ContactDwellBudget(
     int updates_used, int update_budget, int minimum_contact_steps);
 
+struct XarmFullSamplingC3CycleBudgetReceipt {
+  bool accepted{};
+  int remaining_updates{};
+  int acquisition_updates{};
+  int contact_dwell_updates{};
+  int release_recovery_updates{};
+  int required_updates{};
+  int measured_release_recovery_receipts{};
+};
+
+// Admit a selected physical cycle only when its live-IK acquisition estimate,
+// unchanged contact dwell, and worst observed release/recovery receipt all fit
+// in the remaining measured-update budget. The IK estimate is converted from
+// planning-time steps to execution-update units; the release/recovery term is
+// measured rather than supplied by a new tuned margin. Equality is
+// intentionally insufficient so the terminal hold retains one update.
+XarmFullSamplingC3CycleBudgetReceipt
+EvaluateFullSamplingC3CycleBudget(
+    int updates_used, int update_budget, int acquisition_ik_steps,
+    double acquisition_ik_step_seconds, int execution_update_period_ms,
+    int minimum_contact_steps,
+    const std::vector<int>& measured_release_recovery_updates);
+
 bool IsFullSamplingC3WrongPolarityResponse(
     double start_signed_error, double measured_signed_error,
     int response_steps, int minimum_contact_steps);

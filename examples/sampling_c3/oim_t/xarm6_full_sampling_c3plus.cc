@@ -152,6 +152,56 @@ bool HasFullSamplingC3ContactDwellBudget(
   return update_budget - updates_used > minimum_contact_steps;
 }
 
+XarmFullSamplingC3CycleBudgetReceipt
+EvaluateFullSamplingC3CycleBudget(
+    int updates_used, int update_budget, int acquisition_ik_steps,
+    double acquisition_ik_step_seconds, int execution_update_period_ms,
+    int minimum_contact_steps,
+    const std::vector<int>& measured_release_recovery_updates) {
+  if (updates_used < 0 || update_budget < 0 ||
+      updates_used > update_budget || acquisition_ik_steps < 0 ||
+      !std::isfinite(acquisition_ik_step_seconds) ||
+      acquisition_ik_step_seconds <= 0.0 ||
+      execution_update_period_ms <= 0 || minimum_contact_steps < 0 ||
+      measured_release_recovery_updates.empty() ||
+      std::any_of(measured_release_recovery_updates.begin(),
+                  measured_release_recovery_updates.end(),
+                  [](int updates) { return updates < 0; })) {
+    throw std::invalid_argument(
+        "full Sampling-C3+ cycle budget inputs are invalid");
+  }
+  const double acquisition_execution_updates =
+      acquisition_ik_steps * acquisition_ik_step_seconds * 1000.0 /
+      execution_update_period_ms;
+  if (!std::isfinite(acquisition_execution_updates) ||
+      acquisition_execution_updates >
+          std::numeric_limits<int>::max()) {
+    throw std::invalid_argument(
+        "full Sampling-C3+ acquisition budget exceeds integer range");
+  }
+
+  XarmFullSamplingC3CycleBudgetReceipt receipt;
+  receipt.remaining_updates = update_budget - updates_used;
+  receipt.acquisition_updates =
+      static_cast<int>(std::ceil(acquisition_execution_updates));
+  receipt.contact_dwell_updates = minimum_contact_steps;
+  receipt.release_recovery_updates = *std::max_element(
+      measured_release_recovery_updates.begin(),
+      measured_release_recovery_updates.end());
+  receipt.measured_release_recovery_receipts =
+      static_cast<int>(measured_release_recovery_updates.size());
+  const int64_t required_updates =
+      static_cast<int64_t>(receipt.acquisition_updates) +
+      receipt.contact_dwell_updates + receipt.release_recovery_updates;
+  if (required_updates > std::numeric_limits<int>::max()) {
+    throw std::invalid_argument(
+        "full Sampling-C3+ required cycle budget exceeds integer range");
+  }
+  receipt.required_updates = static_cast<int>(required_updates);
+  receipt.accepted = receipt.remaining_updates > receipt.required_updates;
+  return receipt;
+}
+
 bool IsFullSamplingC3WrongPolarityResponse(
     double start_signed_error, double measured_signed_error,
     int response_steps, int minimum_contact_steps) {

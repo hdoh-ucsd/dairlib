@@ -567,3 +567,51 @@ that reserve and corrective recovery reached the 8,000-update limit. Admission
 must reserve observed acquisition and recovery work in addition to the
 unchanged 1,000-step physical dwell, without changing the solver, horizon,
 tolerances, or task definition.
+
+## Gate 30 — measured-overhead-aware cycle admission
+
+The selected candidate's live-IK receipt is now converted into the same update
+units used by physical execution:
+
+```text
+acquisition_updates = ceil(live_ik_steps * planning_dt / execution_dt)
+required_updates = acquisition_updates
+                 + successor_minimum_contact_steps
+                 + max(measured_release_recovery_updates)
+```
+
+The release/recovery term is the maximum completed phase receipt observed in
+the current physical rollout. An unmeasured fallback and an exactly exhausted
+budget are both rejected; no YAML margin was introduced. Admission occurs
+after candidate selection and live six-joint IK, but before `progress_lift`, so
+a deferred cycle remains in its measured safe hold.
+
+```text
+source commit:                    68f1cda36d0fe0d9ef1ba15b2b65c288a6980a14
+worktree:                         dirty; Gate-30 implementation under test
+config SHA-256:                   d11cd65efbcf6ac7c814a0b690cc76f9135d27a9f607f6f10dc7d9b26051b990
+seed/settings/tolerances:         unchanged
+insufficient-budget output:       /root/push_anything_ADMM/results/xarm6_measured_cycle_budget_2000_uKAhCs
+sufficient-budget output:         /root/push_anything_ADMM/results/xarm6_measured_cycle_budget_8000_q8FGmN
+insufficient receipt:             1,418 remaining / 1,815 required, DEFER
+progress-lift commands after defer: 0
+terminal hold after defer:        PASS
+sufficient receipt:               7,413 remaining / 1,837 required, PASS
+physical acquisition:             PASS
+unchanged contact dwell:          1,000 steps, PASS
+terminal translation progress:    0.0232898 m, nonregressive
+terminal orientation progress:    0.0663094 rad, nonregressive
+productive receding cycle:        PASS
+simulator terminal:               FAIL (0.775167 m / 3.05327 rad)
+```
+
+The gate passes both required branches. The longer run then exposed a separate
+execution-consistency failure: a second candidate passed its measured-state
+live-IK preview with 228 steps, but physical OSC execution passed only the
+initial lift, entered fallback, and left the arm at a posture from which every
+candidate failed neutral-anchor waypoint 1. The next gate is therefore
+selected-receipt versus physical-phase conformance: an acquisition that
+diverges from its preview must return to the physically verified neutral anchor
+before replanning, and the candidate must be invalidated without losing the
+completed terminal-descent receipt. The full terminal rollout follows that
+gate under the unchanged 0.05 m / 0.10 rad tolerances.

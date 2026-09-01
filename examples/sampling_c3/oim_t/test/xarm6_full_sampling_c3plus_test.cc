@@ -128,6 +128,46 @@ TEST(XarmFullSamplingC3PlusTest, ContactCycleRequiresCompleteDwellBudget) {
                std::invalid_argument);
 }
 
+TEST(XarmFullSamplingC3PlusTest,
+     MeasuredCycleBudgetReservesAcquisitionDwellAndRecovery) {
+  const std::vector<int> measured_release_recovery{692, 788, 770};
+  const auto late = EvaluateFullSamplingC3CycleBudget(
+      6709, 8000, 200, 0.05, 20, 1000,
+      measured_release_recovery);
+  EXPECT_FALSE(late.accepted);
+  EXPECT_EQ(late.remaining_updates, 1291);
+  EXPECT_EQ(late.acquisition_updates, 500);
+  EXPECT_EQ(late.contact_dwell_updates, 1000);
+  EXPECT_EQ(late.release_recovery_updates, 788);
+  EXPECT_EQ(late.required_updates, 2288);
+  EXPECT_EQ(late.measured_release_recovery_receipts, 3);
+
+  const auto sufficient = EvaluateFullSamplingC3CycleBudget(
+      5000, 8000, 200, 0.05, 20, 1000,
+      measured_release_recovery);
+  EXPECT_TRUE(sufficient.accepted);
+  EXPECT_EQ(sufficient.remaining_updates, 3000);
+
+  const auto equality = EvaluateFullSamplingC3CycleBudget(
+      5712, 8000, 200, 0.05, 20, 1000,
+      measured_release_recovery);
+  EXPECT_FALSE(equality.accepted);
+  EXPECT_EQ(equality.remaining_updates, equality.required_updates);
+}
+
+TEST(XarmFullSamplingC3PlusTest,
+     MeasuredCycleBudgetRejectsUnmeasuredOrInvalidInputs) {
+  EXPECT_THROW(EvaluateFullSamplingC3CycleBudget(
+                   100, 2000, 200, 0.05, 20, 1000, {}),
+               std::invalid_argument);
+  EXPECT_THROW(EvaluateFullSamplingC3CycleBudget(
+                   100, 2000, 200, 0.05, 20, 1000, {-1}),
+               std::invalid_argument);
+  EXPECT_THROW(EvaluateFullSamplingC3CycleBudget(
+                   100, 2000, 200, 0.0, 20, 1000, {100}),
+               std::invalid_argument);
+}
+
 TEST(XarmFullSamplingC3PlusTest, RejectsOnlyMatureWrongPolarityResponse) {
   EXPECT_FALSE(IsFullSamplingC3WrongPolarityResponse(
       0.006, 0.007, 999, 1000));
