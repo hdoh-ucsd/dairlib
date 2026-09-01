@@ -3935,6 +3935,7 @@ int DoMain(int argc, char* argv[]) {
                     live_execution_rejections.insert(
                         progress_plan.sample_name);
                     bool neutral_anchor_reacquired = false;
+                    bool reachable_anchor_fallback = false;
                     if (progress_fallback_released &&
                         full_execution_updates <
                             FLAGS_full_execution_steps) {
@@ -3957,6 +3958,24 @@ int DoMain(int argc, char* argv[]) {
                               progress_sample,
                               "progress_preview_recovery_verticalize_anchor",
                               false, false, false, false, false, false);
+                      if (recovery_lifted && !neutral_anchor_reacquired) {
+                        // A large object-yaw transition can leave the fixed
+                        // home-tip anchor outside the current joint-limit
+                        // component. The measured lift endpoint is already
+                        // capsule-clear; verticalize there before allowing a
+                        // retry, using the identical posture/capsule gate.
+                        const Eigen::Vector3d reachable_anchor =
+                            read_full_tip();
+                        reachable_anchor_fallback =
+                            execute_posture_waypoint(
+                                reachable_anchor,
+                                read_full_object_pose(), progress_sample,
+                                "progress_preview_recovery_reachable_"
+                                "verticalize_anchor",
+                                false, false, false, false, false, false);
+                        neutral_anchor_reacquired =
+                            reachable_anchor_fallback;
+                      }
                     }
                     const bool terminal_receipt_preserved =
                         measured_response_history.size() ==
@@ -3989,6 +4008,8 @@ int DoMain(int argc, char* argv[]) {
                               << conformance.candidate_invalidated
                               << " neutral_anchor_reacquired="
                               << conformance.neutral_anchor_reacquired
+                              << " reachable_anchor_fallback="
+                              << reachable_anchor_fallback
                               << " terminal_receipt_preserved="
                               << conformance.terminal_receipt_preserved
                               << " replanning_allowed="

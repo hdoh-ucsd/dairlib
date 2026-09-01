@@ -450,3 +450,7 @@ stored in the T object's frame and rotated into the current world frame before
 correcting a new candidate. Recovery observations have a dedicated history;
 the corrected world-frame terminal must still pass the unchanged global Pareto
 and lateral gates before its evidence class can improve.
+
+Preview recovery prefers the fixed elevated home anchor. If it is unreachable,
+the already-clear measured lift endpoint may serve as a reachable anchor only
+after vertical posture IK and the existing whole-capsule clearance both pass.

@@ -881,3 +881,28 @@ large yaw transition, the fixed neutral anchor had no position-only IK and its
 recovery anchor also failed contact IK. Gate 39 must construct a measured,
 reachable elevated anchor while preserving the same whole-capsule clearance
 and neutral-reacquisition ownership rules.
+
+## Gate 39 — measured reachable elevated anchor
+
+Failed preview recovery still tries the fixed elevated home-tip anchor first.
+If that anchor is outside the current joint-limit component, the measured lift
+endpoint may become the neutral anchor only after the unchanged vertical
+posture solver and whole-capsule clearance gate pass there.
+
+```text
+source commit:                    dce1e3c5
+config/settings/tolerances:       unchanged
+physical output:                  /root/push_anything_ADMM/results/xarm6_reachable_anchor_8000_c0sgo0
+fixed-anchor reacquisitions:       2 PASS
+reachable-anchor activations:      0 (fallback not triggered)
+equivariant recovery reuse:        1 physical receipt
+honest productive cycles:          3
+simulator terminal:                FAIL (0.731981 m / 2.94436 rad)
+```
+
+Gate 39 is implemented and tested but remains physically untriggered. This run
+does provide Gate 38's missing read receipt: a later `crossbar_left` recovery
+matched one earlier recovery observation across yaw and was classified rank 2.
+Because rank-2 recovery was still retained as deterministic fall-through, it
+reached live IK. Gate 40 must quarantine incompatible corrected recovery before
+live IK while leaving unseen contacts available.
