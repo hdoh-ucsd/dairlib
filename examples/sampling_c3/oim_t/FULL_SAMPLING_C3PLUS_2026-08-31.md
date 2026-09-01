@@ -928,3 +928,32 @@ remains pending. The first recovery started from a rejected loaded posture and
 all eight unseen candidates failed swept-capsule admission at waypoint 0.
 Gate 41 must own a measured outward controlled release before constructing any
 recovery preview, then re-evaluate all candidates from the released posture.
+
+Gate 40's pending physical branch subsequently passed in the Gate-41 rollout:
+two observed `crossbar_left` candidates were rejected with
+`before_live_ik=1`, and neither produced a live-IK or motion receipt.
+
+## Gate 41 — controlled-escape acquisition preview
+
+Measured recovery preview now applies the same controlled vertical escape rule
+as physical execution at waypoint 0. A presently intersecting shaft may escape
+only while the command is vertical, height strictly increases, outward motion
+is nonnegative, and endpoint capsule/table and tip/table clearance pass. All
+later preview waypoints retain ordinary swept-capsule clearance.
+
+```text
+source commit:                    df5e1eb6
+config/settings/tolerances:       unchanged
+physical output:                  /root/push_anything_ADMM/results/xarm6_preview_controlled_escape_8000_XEtH1U
+controlled-escape preview:        1 PASS
+Gate-40 quarantines before IK:     2 PASS
+honest productive cycles:         1
+simulator terminal:               FAIL (0.767900 m / 3.04036 rad)
+```
+
+Gate 41 passes. The previously rejected waypoint-0 recovery reached live IK
+with `controlled_escape=1`, then completed its physical transaction. After the
+history became available, Gate 40 also rejected both incompatible corrective
+faces before IK. No remaining recovery candidate could restore the final
+5.20 mm lateral error. Gate 42 must replenish compatible or unseen corrective
+faces after quarantine without re-admitting the observed-incompatible face.

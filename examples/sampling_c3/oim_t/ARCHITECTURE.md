@@ -459,3 +459,8 @@ An equivariantly corrected recovery with incompatible measured evidence is
 quarantined before live IK. Incompatible evidence is no longer an execution
 fallback; only compatible or unseen contact neighborhoods may reach geometric
 feasibility checks.
+
+Recovery preview and physical execution share a controlled vertical-escape
+contract for their first lift. It admits an initially intersecting shaft only
+when height increases, outward motion is nonnegative, and the endpoint clears
+the table constraints; subsequent waypoints require normal swept clearance.

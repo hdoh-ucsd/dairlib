@@ -449,6 +449,7 @@ ContactPostureResult SolveVerticalContactPostureStep(
 
 struct FullCandidateAcquisitionReceipt {
   bool swept_capsule_clear{};
+  bool used_controlled_escape{};
   bool ik_reached{};
   int ik_steps{};
   int failed_waypoint{-1};
@@ -708,7 +709,10 @@ FullCandidateAcquisitionReceipt EvaluateMeasuredCandidateAcquisition(
           X_WEe.rotation() * Eigen::Vector3d::UnitZ();
       const double vertical_axis_error = std::acos(std::clamp(
           axis_W.dot(-Eigen::Vector3d::UnitZ()), -1.0, 1.0));
-      if ((tip - waypoints[waypoint_index]).norm() <=
+      const double waypoint_error = waypoint_index == 0
+          ? std::abs(tip.z() - waypoints[waypoint_index].z())
+          : (tip - waypoints[waypoint_index]).norm();
+      if (waypoint_error <=
               params.controller.contact_activation_tolerance &&
           (position_only[waypoint_index] ||
            vertical_axis_error <= kMaximumVerticalAxisError)) {
@@ -716,6 +720,9 @@ FullCandidateAcquisitionReceipt EvaluateMeasuredCandidateAcquisition(
         break;
       }
       Eigen::Vector3d command_tip = waypoints[waypoint_index];
+      if (waypoint_index == 0 && command_tip.z() > tip.z()) {
+        command_tip.head<2>() = tip.head<2>();
+      }
       Eigen::Vector3d task_step = command_tip - tip;
       if (task_step.norm() >
           params.controller.task_space_plan_step_limit) {
@@ -738,9 +745,29 @@ FullCandidateAcquisitionReceipt EvaluateMeasuredCandidateAcquisition(
             X_WEe.rotation() * Eigen::Vector3d::UnitZ(),
             X_WNext.rotation() * Eigen::Vector3d::UnitZ(),
             object_xyz_yaw, release_contact);
+        const Eigen::Vector3d next_tip =
+            X_WNext * params.robot.end_effector_point;
+        const auto endpoint = EvaluateContactCapsuleClearance(
+            params, next_tip,
+            X_WNext.rotation() * Eigen::Vector3d::UnitZ(),
+            object_xyz_yaw, release_contact);
+        const Eigen::Vector2d release_normal_W =
+            Eigen::Rotation2Dd(object_xyz_yaw.z()) *
+            release_contact.normal;
+        const double outward_progress =
+            (next_tip.head<2>() - tip.head<2>()).dot(release_normal_W);
+        const bool controlled_vertical_escape =
+            waypoint_index == 0 && endpoint.capsule_table_clear &&
+            endpoint.tip_table_clear &&
+            (command_tip.head<2>() - tip.head<2>()).squaredNorm() <=
+                1.0e-24 &&
+            next_tip.z() > tip.z() && outward_progress >= 0.0;
+        receipt.used_controlled_escape =
+            receipt.used_controlled_escape || controlled_vertical_escape;
         receipt.swept_capsule_clear =
-            receipt.swept_capsule_clear && swept.clear();
-        if (!swept.clear()) break;
+            receipt.swept_capsule_clear &&
+            (swept.clear() || controlled_vertical_escape);
+        if (!swept.clear() && !controlled_vertical_escape) break;
       } else {
         const auto posture = SolveVerticalContactPostureStep(
             plant, context, params, q, command_tip,
@@ -4533,6 +4560,9 @@ int DoMain(int argc, char* argv[]) {
                                       << live_receipt.failed_waypoint
                                       << " swept_capsule_clear="
                                       << live_receipt.swept_capsule_clear
+                                      << " controlled_escape="
+                                      << live_receipt
+                                             .used_controlled_escape
                                       << " failure_ik_solved="
                                       << live_receipt.failure_ik_solved
                                       << " failure_shaft_clear="
