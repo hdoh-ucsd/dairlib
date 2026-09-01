@@ -122,6 +122,19 @@ bool IsFullSamplingC3WaypointExecutionConformant(
     double phase_entry_waypoint_error, double measured_waypoint_error,
     double contact_activation_tolerance);
 
+struct XarmFullSamplingC3WaypointConformanceReceipt {
+  int consecutive_violation_updates{};
+  bool persistent_violation{};
+};
+
+// A single control observation can cross the spatial conformance boundary
+// during normal settling. Preserve that boundary, but invalidate execution
+// only when it remains crossed for one planning interval.
+XarmFullSamplingC3WaypointConformanceReceipt
+EvaluateFullSamplingC3WaypointConformancePersistence(
+    bool spatially_conformant, int prior_consecutive_violation_updates,
+    int required_consecutive_violation_updates);
+
 // Revolute IK may return q +/- 2*pi at identical Cartesian posture. For joints
 // whose declared range contains a complete revolution, select the equivalent
 // in-limit representation nearest measured q before forming a bounded step.

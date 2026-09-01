@@ -2232,6 +2232,11 @@ int DoMain(int argc, char* argv[]) {
                   : (waypoint - current_tip).norm();
           double best_measured_waypoint_error =
               phase_entry_waypoint_error;
+          int consecutive_conformance_violation_updates = 0;
+          const int required_conformance_violation_updates = std::max(
+              1, static_cast<int>(std::ceil(
+                     params.task.planning_time_step /
+                     (1.0e-3 * FLAGS_full_execution_period_ms))));
           auto posture_waypoint_reached = [&]() {
             const double waypoint_error =
                 (vertical_release || measured_vertical_translation)
@@ -2472,11 +2477,19 @@ int DoMain(int argc, char* argv[]) {
                 measured_vertical_translation
                     ? std::abs(waypoint.z() - current_tip.z())
                     : (waypoint - current_tip).norm();
+            const bool spatially_conformant =
+                IsFullSamplingC3WaypointExecutionConformant(
+                    best_measured_waypoint_error, measured_waypoint_error,
+                    params.controller.contact_activation_tolerance);
+            const auto conformance_receipt =
+                EvaluateFullSamplingC3WaypointConformancePersistence(
+                    spatially_conformant,
+                    consecutive_conformance_violation_updates,
+                    required_conformance_violation_updates);
+            consecutive_conformance_violation_updates =
+                conformance_receipt.consecutive_violation_updates;
             if (enforce_preview_conformance &&
-                !IsFullSamplingC3WaypointExecutionConformant(
-                    best_measured_waypoint_error,
-                    measured_waypoint_error,
-                    params.controller.contact_activation_tolerance)) {
+                conformance_receipt.persistent_violation) {
               std::cout <<
                   "full_sampling_c3plus_physical_preview_conformance=FAIL"
                         << " phase=" << phase
@@ -2488,6 +2501,10 @@ int DoMain(int argc, char* argv[]) {
                         << measured_waypoint_error
                         << " tolerance_m="
                         << params.controller.contact_activation_tolerance
+                        << " consecutive_violation_updates="
+                        << consecutive_conformance_violation_updates
+                        << " required_violation_updates="
+                        << required_conformance_violation_updates
                         << " updates=" << full_execution_updates
                         << std::endl;
               return false;

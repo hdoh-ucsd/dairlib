@@ -577,3 +577,9 @@ observed within a phase, not only its entry error. This exposes cumulative
 tracking reversal before a periodic joint winds to a limit; the physical
 evidence also requires persistence filtering before the receipt can govern
 normal settling motion.
+
+Conformance persistence spans one existing planning interval, expressed as an
+integer number of measured execution updates. It filters isolated boundary
+crossings without creating another time or distance parameter; live evidence
+determines which motion phases may safely use the stronger best-so-far
+reference.

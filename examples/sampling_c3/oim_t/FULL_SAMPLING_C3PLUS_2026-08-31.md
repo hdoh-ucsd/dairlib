@@ -1465,3 +1465,29 @@ best-error comparison is too sensitive to the normal 20 ms settling ripple:
 all twelve otherwise executable acquisitions were rejected after only
 3.1--4.0 mm of transient backslide. Gate 62 must require a persistent
 best-so-far violation while preserving the same spatial tolerance.
+
+## Gate 62 — planning-interval conformance persistence
+
+The same 3 mm best-so-far boundary now has temporal persistence derived from
+existing timing: `ceil(planning_time_step / execution_period) = 3` measured
+updates. A conformant sample resets the consecutive count; no YAML field or
+spatial tolerance was added.
+
+```text
+source commit:                    10c94f3c
+config/settings/tolerances:       unchanged
+focused tests / live build:       PASS / PASS
+physical output:                  /root/push_anything_ADMM/results/xarm6_persistent_conformance_8000_lLMN8g
+persistent conformance rejects:   12 (3 consecutive updates each)
+measured q1 range:                [-0.273459, 0.859734] rad
+measured q2 range:                [-0.862359, 0.646928] rad
+measured productive cycles:       0
+simulator terminal:               FAIL (0.796994 m / 3.12119 rad)
+```
+
+Gate 62 proves the lower-phase reversal persists for a full planning interval,
+so it is not a one-sample measurement spike. The best-so-far invariant is
+still too broad: normal lower/descend convergence can be nonmonotone, whereas
+the observed periodic winding belongs specifically to long neutral-anchor
+traversal. Gate 63 must preserve phase-entry conformance for ordinary phases
+and apply persistent best-so-far conformance only to neutral anchors.

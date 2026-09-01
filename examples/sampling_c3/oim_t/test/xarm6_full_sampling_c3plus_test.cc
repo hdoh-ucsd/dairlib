@@ -205,6 +205,26 @@ TEST(XarmFullSamplingC3PlusTest,
 }
 
 TEST(XarmFullSamplingC3PlusTest,
+     WaypointConformanceRequiresOnePlanningIntervalOfViolation) {
+  auto receipt = EvaluateFullSamplingC3WaypointConformancePersistence(
+      false, 0, 3);
+  EXPECT_EQ(receipt.consecutive_violation_updates, 1);
+  EXPECT_FALSE(receipt.persistent_violation);
+  receipt = EvaluateFullSamplingC3WaypointConformancePersistence(
+      false, receipt.consecutive_violation_updates, 3);
+  EXPECT_FALSE(receipt.persistent_violation);
+  receipt = EvaluateFullSamplingC3WaypointConformancePersistence(
+      true, receipt.consecutive_violation_updates, 3);
+  EXPECT_EQ(receipt.consecutive_violation_updates, 0);
+  receipt = EvaluateFullSamplingC3WaypointConformancePersistence(
+      false, 2, 3);
+  EXPECT_TRUE(receipt.persistent_violation);
+  EXPECT_THROW(EvaluateFullSamplingC3WaypointConformancePersistence(
+                   false, -1, 3),
+               std::invalid_argument);
+}
+
+TEST(XarmFullSamplingC3PlusTest,
      PeriodicIkSolutionUsesEquivalentBranchNearestMeasuredState) {
   const double pi = std::acos(-1.0);
   Eigen::VectorXd solution(3), measured(3), lower(3), upper(3);

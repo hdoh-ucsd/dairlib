@@ -245,6 +245,25 @@ bool IsFullSamplingC3WaypointExecutionConformant(
       phase_entry_waypoint_error + contact_activation_tolerance;
 }
 
+XarmFullSamplingC3WaypointConformanceReceipt
+EvaluateFullSamplingC3WaypointConformancePersistence(
+    bool spatially_conformant, int prior_consecutive_violation_updates,
+    int required_consecutive_violation_updates) {
+  if (prior_consecutive_violation_updates < 0 ||
+      required_consecutive_violation_updates <= 0) {
+    throw std::invalid_argument(
+        "full Sampling-C3+ waypoint conformance persistence is invalid");
+  }
+  XarmFullSamplingC3WaypointConformanceReceipt receipt;
+  receipt.consecutive_violation_updates = spatially_conformant
+      ? 0
+      : prior_consecutive_violation_updates + 1;
+  receipt.persistent_violation =
+      receipt.consecutive_violation_updates >=
+      required_consecutive_violation_updates;
+  return receipt;
+}
+
 Eigen::VectorXd CanonicalizeXarmPeriodicIkSolutionNearestMeasured(
     const Eigen::VectorXd& solution, const Eigen::VectorXd& measured,
     const Eigen::VectorXd& lower_limits,
