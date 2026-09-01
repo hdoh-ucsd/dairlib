@@ -1721,4 +1721,27 @@ XarmFullSamplingC3TerminalStatus EvaluateXarmFullSamplingC3TerminalStatus(
   return status;
 }
 
+XarmFullSamplingC3ParetoWrenchReceipt EvaluateXarmFullSamplingC3ParetoWrench(
+    double desired_translation_direction, double force_translation_component,
+    double desired_orientation_direction, double planar_moment) {
+  if (!std::isfinite(desired_translation_direction) ||
+      !std::isfinite(force_translation_component) ||
+      !std::isfinite(desired_orientation_direction) ||
+      !std::isfinite(planar_moment)) {
+    throw std::invalid_argument("Pareto wrench inputs must be finite");
+  }
+  XarmFullSamplingC3ParetoWrenchReceipt receipt;
+  receipt.translation_alignment =
+      desired_translation_direction * force_translation_component;
+  receipt.orientation_alignment =
+      desired_orientation_direction * planar_moment;
+  receipt.translation_nonregressive = receipt.translation_alignment >= 0.0;
+  receipt.orientation_nonregressive = receipt.orientation_alignment >= 0.0;
+  receipt.minimum_productivity = receipt.translation_alignment > 0.0 ||
+      receipt.orientation_alignment > 0.0;
+  receipt.accepted = receipt.translation_nonregressive &&
+      receipt.orientation_nonregressive && receipt.minimum_productivity;
+  return receipt;
+}
+
 }  // namespace dairlib::oim

@@ -3310,9 +3310,10 @@ int DoMain(int argc, char* argv[]) {
                       params.object.goal_pose.y() - progress_start_pose.y();
                   const double desired_yaw_direction = WrappedAngleError(
                       params.object.goal_pose.z(), progress_start_pose.z());
-                  const bool initial_wrench_productive =
-                      desired_y_direction * initial_object_force_W.y() > 0.0 ||
-                      desired_yaw_direction * initial_object_moment > 0.0;
+                  const auto initial_wrench =
+                      EvaluateXarmFullSamplingC3ParetoWrench(
+                          desired_y_direction, initial_object_force_W.y(),
+                          desired_yaw_direction, initial_object_moment);
                   bool predicted_capsule_table_clear =
                       candidate.initial_pusher_position_W.z() >=
                       params.controller.pusher_radius;
@@ -3369,7 +3370,11 @@ int DoMain(int argc, char* argv[]) {
                             << " ranking_lateral_m="
                             << response_conditioned_lateral
                             << " wrench_productive="
-                            << initial_wrench_productive
+                            << initial_wrench.accepted
+                            << " wrench_translation_alignment="
+                            << initial_wrench.translation_alignment
+                            << " wrench_orientation_alignment="
+                            << initial_wrench.orientation_alignment
                             << " capsule_table_clear="
                             << predicted_capsule_table_clear
                             << " central_side_contact="
@@ -3391,7 +3396,7 @@ int DoMain(int argc, char* argv[]) {
                             << corrected_lateral_safe << std::endl;
                   const bool monitored_candidate =
                       response_conditioned_productive &&
-                      initial_wrench_productive &&
+                      initial_wrench.accepted &&
                       predicted_capsule_table_clear &&
                       central_side_contact && predicted_lateral_safe &&
                       corrected_lateral_safe;

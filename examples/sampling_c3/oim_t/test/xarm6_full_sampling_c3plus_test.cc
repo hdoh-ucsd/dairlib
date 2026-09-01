@@ -748,5 +748,20 @@ TEST(XarmFullSamplingC3PlusTest,
             "measured_cycle_budget_deferred_without_handoff");
 }
 
+TEST(XarmFullSamplingC3PlusTest, ParetoWrenchRejectsOpposingTaskComponent) {
+  const auto yaw_only_with_wrong_translation =
+      EvaluateXarmFullSamplingC3ParetoWrench(-1.0, 1.0, 1.0, 0.5);
+  EXPECT_FALSE(yaw_only_with_wrong_translation.translation_nonregressive);
+  EXPECT_TRUE(yaw_only_with_wrong_translation.orientation_nonregressive);
+  EXPECT_TRUE(yaw_only_with_wrong_translation.minimum_productivity);
+  EXPECT_FALSE(yaw_only_with_wrong_translation.accepted);
+
+  const auto pareto_productive =
+      EvaluateXarmFullSamplingC3ParetoWrench(-1.0, -0.5, 1.0, 0.25);
+  EXPECT_TRUE(pareto_productive.translation_nonregressive);
+  EXPECT_TRUE(pareto_productive.orientation_nonregressive);
+  EXPECT_TRUE(pareto_productive.accepted);
+}
+
 }  // namespace
 }  // namespace dairlib::oim

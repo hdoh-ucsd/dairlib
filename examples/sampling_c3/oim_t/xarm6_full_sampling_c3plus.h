@@ -497,4 +497,20 @@ XarmFullSamplingC3TerminalStatus EvaluateXarmFullSamplingC3TerminalStatus(
     bool any_productive_cycle, bool cycle_budget_deferred,
     int execution_updates, int execution_budget, bool terminal_pose_accepted);
 
+struct XarmFullSamplingC3ParetoWrenchReceipt {
+  double translation_alignment{};
+  double orientation_alignment{};
+  bool translation_nonregressive{};
+  bool orientation_nonregressive{};
+  bool minimum_productivity{};
+  bool accepted{};
+};
+
+// Applies the terminal Pareto contract to an instantaneous planar wrench:
+// neither task component may oppose its desired direction, and at least one
+// component must be strictly productive. No magnitude threshold is introduced.
+XarmFullSamplingC3ParetoWrenchReceipt EvaluateXarmFullSamplingC3ParetoWrench(
+    double desired_translation_direction, double force_translation_component,
+    double desired_orientation_direction, double planar_moment);
+
 }  // namespace dairlib::oim

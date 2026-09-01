@@ -1130,3 +1130,27 @@ normal force opposed desired y translation. The current disjunctive wrench
 test admits either component. Gate 49 must apply the same Pareto contract used
 for terminal descent: both wrench components nonregressive and at least one
 strictly productive.
+
+## Gate 49 — Pareto-consistent wrench admission
+
+Initial contact wrench admission now mirrors terminal Pareto descent. Desired
+y times contact-force y and desired yaw times planar moment must each be
+nonnegative, and at least one must be strictly positive. This adds no magnitude
+threshold and runs before live IK or physical motion.
+
+```text
+source commit:                    2dbd25e8
+config/settings/tolerances:       unchanged
+physical output:                  /root/push_anything_ADMM/results/xarm6_pareto_wrench_8000_wytIfk
+translation-polarity rejections:  326
+orientation-polarity rejections:  391
+honest productive cycles:         3
+simulator terminal:               FAIL (0.744168 m / 2.90777 rad)
+```
+
+Gate 49 passes physical activation. The prior large y regression did not
+recur, and productive cycling increased from two to three. A fourth contact
+exited the lateral corridor by 6.285 mm. Every corrective proposal then failed
+strict global two-component Pareto prediction, leaving no recovery. Gate 50
+must admit a bounded lateral-restoration transaction while keeping final
+global tolerance and measured post-recovery acceptance unchanged.

@@ -503,3 +503,9 @@ productivity gain: accumulated measured normalized Pareto descent divided by
 the corresponding C3+ prediction. Compatible candidates are ordered by the
 gain-calibrated magnitude; unseen exploration and incompatible quarantine keep
 their existing evidence-class precedence and all geometric gates still apply.
+
+Primary contact wrench admission is Pareto-consistent with task descent. The
+translation and orientation alignment products must both be nonnegative and
+at least one strictly positive. A yaw-helpful contact cannot be admitted when
+its normal force opposes required translation, or vice versa; no force or
+moment magnitude threshold is added.
