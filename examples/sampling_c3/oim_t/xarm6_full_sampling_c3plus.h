@@ -92,6 +92,36 @@ EvaluateFullSamplingC3CycleBudget(
     int minimum_contact_steps,
     const std::vector<int>& measured_release_recovery_updates);
 
+struct XarmFullSamplingC3AcquisitionConformanceReceipt {
+  bool preview_accepted{};
+  int expected_phases{};
+  int completed_phases{};
+  bool physical_acquisition_completed{};
+  bool recovery_required{};
+  bool candidate_invalidated{};
+  bool neutral_anchor_reacquired{};
+  bool terminal_receipt_preserved{};
+  bool replanning_allowed{};
+};
+
+// A candidate admitted by live IK may be executed directly only when every
+// physical acquisition phase completes. If measured execution diverges, the
+// candidate must be invalidated and replanning remains fail-closed until the
+// verified neutral anchor is physically reacquired without discarding the
+// completed terminal-descent evidence from the preceding cycle.
+XarmFullSamplingC3AcquisitionConformanceReceipt
+EvaluateFullSamplingC3AcquisitionConformance(
+    bool preview_accepted, int expected_phases, int completed_phases,
+    bool candidate_invalidated, bool neutral_anchor_reacquired,
+    bool terminal_receipt_preserved);
+
+// Reject task-space tracking that moves farther from the active waypoint by
+// more than the existing contact-activation tolerance. This detects physical
+// execution leaving a live-IK preview without introducing another threshold.
+bool IsFullSamplingC3WaypointExecutionConformant(
+    double best_waypoint_error, double measured_waypoint_error,
+    double contact_activation_tolerance);
+
 bool IsFullSamplingC3WrongPolarityResponse(
     double start_signed_error, double measured_signed_error,
     int response_steps, int minimum_contact_steps);

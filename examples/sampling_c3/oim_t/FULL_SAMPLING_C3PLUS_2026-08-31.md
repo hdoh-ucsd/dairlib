@@ -615,3 +615,40 @@ diverges from its preview must return to the physically verified neutral anchor
 before replanning, and the candidate must be invalidated without losing the
 completed terminal-descent receipt. The full terminal rollout follows that
 gate under the unchanged 0.05 m / 0.10 rad tolerances.
+
+## Gate 31 — selected-preview versus physical-acquisition conformance
+
+Every selected live-IK acquisition now has a seven-phase physical receipt:
+lift, neutral anchor, verticalization, overhead traverse, lower, descent, and
+contact. Measured task-space regression beyond the existing 3 mm activation
+tolerance invalidates the candidate. A pre-descent failure does not execute an
+unowned face-release command. Replanning is allowed only after collision-aware
+return to the elevated home-tip anchor, verification of the vertical capsule,
+and preservation of the preceding terminal-descent evidence.
+
+```text
+source commit:                    4a7ba15119f55f3bacc223d9f182e98624f80f9e
+worktree:                         dirty; Gate-31 implementation under test
+config SHA-256:                   d11cd65efbcf6ac7c814a0b690cc76f9135d27a9f607f6f10dc7d9b26051b990
+seed/settings/tolerances:         unchanged
+physical output:                  /root/push_anything_ADMM/results/xarm6_acquisition_conformance_retry_8000_DgKtuO
+preview divergences:              25
+candidate invalidations:          25
+verified neutral reacquisitions:  25
+terminal receipts preserved:      25
+unsafe replans:                   0
+prior unguarded failure:          update 3,132
+first guarded failure:            update 1,066
+planner terminal:                 wall-clock timeout after simulator duration
+open_table terminal:              not reached
+```
+
+Gate 31 passes: every observed divergence was rejected and every retry was
+conditioned on a measured neutral-anchor recovery. The receipt also isolates
+Gate 32. The controller declares a waypoint complete while the arm still has
+substantial measured motion; Sampling-C3+ then blocks for seconds while OSC
+continues the last endpoint command. The next subtarget can therefore observe
+a large overshoot despite its 5 mm command bound. Gate 32 must condition phase
+completion on measured end-effector settling derived from the unchanged 3 mm
+activation tolerance and 50 ms planning interval, then demonstrate a physical
+acquisition beyond `progress_lower` without changing OSC gains or task limits.

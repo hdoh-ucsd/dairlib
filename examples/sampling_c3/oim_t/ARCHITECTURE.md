@@ -391,3 +391,13 @@ sum. Missing measurements and equality fail closed. This guard is downstream
 of candidate selection and live IK but upstream of the first physical lift, so
 budget rejection publishes no partial acquisition command and preserves the
 measured safe hold. It adds no solver, tolerance, cost, horizon, or YAML change.
+
+Live-IK admission and physical acquisition are now linked by an explicit
+conformance transaction. Seven ordered physical phases correspond to the
+selected preview. A measured task-space regression quarantines the selected
+candidate; early failures skip candidate-face release because no candidate
+contact exists. Replanning is fail-closed until the pusher returns to the
+elevated home-tip anchor with a vertical capsule and the preceding cycle's
+terminal evidence remains present. This separates safe retry permission from
+task success: a recovered divergence is a passing conformance receipt, not a
+productive manipulation cycle.

@@ -202,6 +202,48 @@ EvaluateFullSamplingC3CycleBudget(
   return receipt;
 }
 
+XarmFullSamplingC3AcquisitionConformanceReceipt
+EvaluateFullSamplingC3AcquisitionConformance(
+    bool preview_accepted, int expected_phases, int completed_phases,
+    bool candidate_invalidated, bool neutral_anchor_reacquired,
+    bool terminal_receipt_preserved) {
+  if (expected_phases <= 0 || completed_phases < 0 ||
+      completed_phases > expected_phases) {
+    throw std::invalid_argument(
+        "full Sampling-C3+ acquisition phase counts are invalid");
+  }
+  XarmFullSamplingC3AcquisitionConformanceReceipt receipt;
+  receipt.preview_accepted = preview_accepted;
+  receipt.expected_phases = expected_phases;
+  receipt.completed_phases = completed_phases;
+  receipt.physical_acquisition_completed =
+      preview_accepted && completed_phases == expected_phases;
+  receipt.recovery_required =
+      preview_accepted && !receipt.physical_acquisition_completed;
+  receipt.candidate_invalidated = candidate_invalidated;
+  receipt.neutral_anchor_reacquired = neutral_anchor_reacquired;
+  receipt.terminal_receipt_preserved = terminal_receipt_preserved;
+  receipt.replanning_allowed = receipt.physical_acquisition_completed ||
+      (receipt.recovery_required && candidate_invalidated &&
+       neutral_anchor_reacquired && terminal_receipt_preserved);
+  return receipt;
+}
+
+bool IsFullSamplingC3WaypointExecutionConformant(
+    double best_waypoint_error, double measured_waypoint_error,
+    double contact_activation_tolerance) {
+  if (!std::isfinite(best_waypoint_error) || best_waypoint_error < 0.0 ||
+      !std::isfinite(measured_waypoint_error) ||
+      measured_waypoint_error < 0.0 ||
+      !std::isfinite(contact_activation_tolerance) ||
+      contact_activation_tolerance < 0.0) {
+    throw std::invalid_argument(
+        "full Sampling-C3+ waypoint conformance inputs are invalid");
+  }
+  return measured_waypoint_error <=
+      best_waypoint_error + contact_activation_tolerance;
+}
+
 bool IsFullSamplingC3WrongPolarityResponse(
     double start_signed_error, double measured_signed_error,
     int response_steps, int minimum_contact_steps) {

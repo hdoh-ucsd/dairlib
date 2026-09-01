@@ -2121,8 +2121,11 @@ int DoMain(int argc, char* argv[]) {
                                             bool reject_on_lateral_exit =
                                                 false,
                                             bool contact_engagement = false,
-                                            bool vertical_release = false) {
+                                            bool vertical_release = false,
+                                            bool enforce_preview_conformance =
+                                                false) {
           Eigen::Vector3d current_tip = read_full_tip();
+          double best_waypoint_error = (waypoint - current_tip).norm();
           auto posture_waypoint_reached = [&]() {
             const double waypoint_error = vertical_release
                 ? std::abs(waypoint.z() - current_tip.z())
@@ -2351,6 +2354,27 @@ int DoMain(int argc, char* argv[]) {
             current_tip = read_full_tip();
             ++full_execution_updates;
             ++commanded_subtargets;
+            const double measured_waypoint_error =
+                (waypoint - current_tip).norm();
+            if (enforce_preview_conformance &&
+                !IsFullSamplingC3WaypointExecutionConformant(
+                    best_waypoint_error, measured_waypoint_error,
+                    params.controller.contact_activation_tolerance)) {
+              std::cout <<
+                  "full_sampling_c3plus_physical_preview_conformance=FAIL"
+                        << " phase=" << phase
+                        << " best_waypoint_error_m="
+                        << best_waypoint_error
+                        << " measured_waypoint_error_m="
+                        << measured_waypoint_error
+                        << " tolerance_m="
+                        << params.controller.contact_activation_tolerance
+                        << " updates=" << full_execution_updates
+                        << std::endl;
+              return false;
+            }
+            best_waypoint_error = std::min(
+                best_waypoint_error, measured_waypoint_error);
             if (stop_on_lateral_corridor &&
                 std::abs(read_full_object_x() -
                          params.object.goal_pose.x()) <=
@@ -3649,13 +3673,15 @@ int DoMain(int argc, char* argv[]) {
                   const bool progress_lifted = execute_posture_waypoint(
                       progress_lift, progress_start_pose,
                       active_release_sample,
-                      "progress_lift", true, false, false, false, true);
+                      "progress_lift", true, false, false, false, true,
+                      true);
                   const bool progress_anchored = progress_lifted &&
                       (!use_progress_neutral_anchor ||
                        execute_posture_waypoint(
                            progress_anchor, progress_start_pose,
                            active_release_sample,
-                           "progress_neutral_anchor", true, false));
+                           "progress_neutral_anchor", true, false, false,
+                           false, false, true));
                   const Eigen::Vector3d progress_verticalization_point =
                       use_progress_neutral_anchor ? progress_anchor :
                           progress_lift;
@@ -3663,31 +3689,70 @@ int DoMain(int argc, char* argv[]) {
                       execute_posture_waypoint(
                           progress_verticalization_point,
                           progress_start_pose, progress_sample,
-                          "progress_verticalize", false, false);
+                          "progress_verticalize", false, false, false,
+                          false, false, false);
                   const bool progress_traversed = progress_verticalized &&
                       execute_posture_waypoint(
                           use_progress_neutral_anchor ? progress_overhead :
                               progress_high,
                           progress_start_pose, progress_sample,
-                          "progress_traverse", false, false);
+                          "progress_traverse", false, false, false, false,
+                          false, true);
                   const bool progress_lowered = progress_traversed &&
                       (!use_progress_neutral_anchor ||
                        execute_posture_waypoint(
                            progress_high, progress_start_pose,
                            progress_sample, "progress_lower", false,
-                           false));
+                           false, false, false, false, true));
                   const bool progress_descended = progress_lowered &&
                       execute_posture_waypoint(
                           progress_standoff, progress_start_pose,
-                          progress_sample, "progress_descend", false, false);
+                          progress_sample, "progress_descend", false, false,
+                          false, false, false, true);
                   const bool progress_contact_reached = progress_descended &&
                       execute_posture_waypoint(
                           progress_contact, progress_start_pose,
                           progress_sample, "progress_contact", false, false,
-                          false, true);
+                          false, true, false, true);
+                  const int completed_acquisition_phases =
+                      static_cast<int>(progress_lifted) +
+                      static_cast<int>(progress_anchored) +
+                      static_cast<int>(progress_verticalized) +
+                      static_cast<int>(progress_traversed) +
+                      static_cast<int>(progress_lowered) +
+                      static_cast<int>(progress_descended) +
+                      static_cast<int>(progress_contact_reached);
+                  if (progress_contact_reached) {
+                    const auto conformance =
+                        EvaluateFullSamplingC3AcquisitionConformance(
+                            true, 7, completed_acquisition_phases, false,
+                            false, true);
+                    std::cout <<
+                        "full_sampling_c3plus_acquisition_conformance=PASS"
+                              << " sample=" << progress_plan.sample_name
+                              << " completed_phases="
+                              << conformance.completed_phases
+                              << " expected_phases="
+                              << conformance.expected_phases
+                              << " physical_acquisition_completed="
+                              << conformance.physical_acquisition_completed
+                              << " recovery_required="
+                              << conformance.recovery_required
+                              << " replanning_allowed="
+                              << conformance.replanning_allowed
+                              << " updates=" << full_execution_updates
+                              << std::endl;
+                  }
                   if (!progress_contact_reached &&
                       full_execution_updates < FLAGS_full_execution_steps) {
-                    bool progress_fallback_released = false;
+                    const std::size_t terminal_receipts_before_recovery =
+                        measured_response_history.size();
+                    // Before descent, the pusher is already above and clear
+                    // of the rejected candidate. Applying that candidate's
+                    // face normal as a release command would create a large
+                    // unrelated traverse. Only a failed descent/contact
+                    // approach owns a physical face-release transaction.
+                    bool progress_fallback_released = !progress_descended;
                     while (!progress_fallback_released &&
                            full_execution_updates <
                                FLAGS_full_execution_steps) {
@@ -3726,9 +3791,41 @@ int DoMain(int argc, char* argv[]) {
                     }
                     live_execution_rejections.insert(
                         progress_plan.sample_name);
+                    bool neutral_anchor_reacquired = false;
+                    if (progress_fallback_released &&
+                        full_execution_updates <
+                            FLAGS_full_execution_steps) {
+                      Eigen::Vector3d recovery_lift = read_full_tip();
+                      recovery_lift.z() = std::max(
+                          recovery_lift.z(),
+                          CapsuleObjectClearanceHeight(params));
+                      const bool recovery_lifted =
+                          execute_posture_waypoint(
+                              recovery_lift, read_full_object_pose(),
+                              progress_sample,
+                              "progress_preview_recovery_lift", true,
+                              false, false, false, true, true);
+                      Eigen::Vector3d recovery_anchor =
+                          acquisition_home_tip;
+                      recovery_anchor.z() = recovery_lift.z();
+                      neutral_anchor_reacquired = recovery_lifted &&
+                          execute_posture_waypoint(
+                              recovery_anchor, read_full_object_pose(),
+                              progress_sample,
+                              "progress_preview_recovery_verticalize_anchor",
+                              false, false, false, false, false, false);
+                    }
+                    const bool terminal_receipt_preserved =
+                        measured_response_history.size() ==
+                        terminal_receipts_before_recovery;
+                    const auto conformance =
+                        EvaluateFullSamplingC3AcquisitionConformance(
+                            true, 7, completed_acquisition_phases, true,
+                            neutral_anchor_reacquired,
+                            terminal_receipt_preserved);
                     std::cout <<
                         "full_sampling_c3plus_progress_execution_fallback="
-                              << (progress_fallback_released ? "RETRY" :
+                              << (conformance.replanning_allowed ? "RETRY" :
                                   "EXHAUSTED")
                               << " sample="
                               << progress_plan.sample_name
@@ -3736,12 +3833,26 @@ int DoMain(int argc, char* argv[]) {
                               << live_execution_rejections.size()
                               << " updates=" << full_execution_updates
                               << std::endl;
-                    if (progress_fallback_released) {
-                      active_release_name = progress_plan.sample_name;
-                      active_release_sample = ContactSample{
-                          progress_plan.sample_point_O,
-                          progress_plan.sample_normal_O,
-                          active_release_name.c_str(), progress_face};
+                    std::cout <<
+                        "full_sampling_c3plus_acquisition_conformance="
+                              << (conformance.replanning_allowed ? "PASS" :
+                                  "FAIL")
+                              << " sample=" << progress_plan.sample_name
+                              << " completed_phases="
+                              << conformance.completed_phases
+                              << " expected_phases="
+                              << conformance.expected_phases
+                              << " candidate_invalidated="
+                              << conformance.candidate_invalidated
+                              << " neutral_anchor_reacquired="
+                              << conformance.neutral_anchor_reacquired
+                              << " terminal_receipt_preserved="
+                              << conformance.terminal_receipt_preserved
+                              << " replanning_allowed="
+                              << conformance.replanning_allowed
+                              << " updates=" << full_execution_updates
+                              << std::endl;
+                    if (conformance.replanning_allowed) {
                       corrective_lateral_recovery = true;
                       continue;
                     }

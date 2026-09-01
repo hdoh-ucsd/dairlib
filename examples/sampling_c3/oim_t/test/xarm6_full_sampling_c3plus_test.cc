@@ -168,6 +168,40 @@ TEST(XarmFullSamplingC3PlusTest,
                std::invalid_argument);
 }
 
+TEST(XarmFullSamplingC3PlusTest,
+     PhysicalAcquisitionConformanceRequiresVerifiedRecovery) {
+  const auto completed = EvaluateFullSamplingC3AcquisitionConformance(
+      true, 7, 7, false, false, true);
+  EXPECT_TRUE(completed.physical_acquisition_completed);
+  EXPECT_FALSE(completed.recovery_required);
+  EXPECT_TRUE(completed.replanning_allowed);
+
+  const auto unsafe_retry = EvaluateFullSamplingC3AcquisitionConformance(
+      true, 7, 1, true, false, true);
+  EXPECT_TRUE(unsafe_retry.recovery_required);
+  EXPECT_FALSE(unsafe_retry.replanning_allowed);
+
+  const auto recovered = EvaluateFullSamplingC3AcquisitionConformance(
+      true, 7, 1, true, true, true);
+  EXPECT_TRUE(recovered.recovery_required);
+  EXPECT_TRUE(recovered.replanning_allowed);
+
+  const auto lost_receipt = EvaluateFullSamplingC3AcquisitionConformance(
+      true, 7, 1, true, true, false);
+  EXPECT_FALSE(lost_receipt.replanning_allowed);
+}
+
+TEST(XarmFullSamplingC3PlusTest,
+     WaypointConformanceUsesExistingActivationTolerance) {
+  EXPECT_TRUE(IsFullSamplingC3WaypointExecutionConformant(
+      0.05, 0.053, 0.003));
+  EXPECT_FALSE(IsFullSamplingC3WaypointExecutionConformant(
+      0.05, 0.053001, 0.003));
+  EXPECT_THROW(IsFullSamplingC3WaypointExecutionConformant(
+                   -1.0, 0.0, 0.003),
+               std::invalid_argument);
+}
+
 TEST(XarmFullSamplingC3PlusTest, RejectsOnlyMatureWrongPolarityResponse) {
   EXPECT_FALSE(IsFullSamplingC3WrongPolarityResponse(
       0.006, 0.007, 999, 1000));
