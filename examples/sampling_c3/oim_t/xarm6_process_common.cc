@@ -24,14 +24,18 @@ void DemandSize(const Eigen::VectorXd& value, int expected,
 OimTParams LoadAndValidateConfig(const std::string& path) {
   OimTParams params = drake::yaml::LoadYamlFile<OimTParams>(path);
   const int joints = params.robot.controlled_joints.size();
-  if (joints != 6) throw std::runtime_error("OIM xArm6 requires six joints");
-  const std::array<std::string, 6> expected_joints = {
-      "xarm6_joint1", "xarm6_joint2", "xarm6_joint3",
-      "xarm6_joint4", "xarm6_joint5", "xarm6_joint6"};
-  for (int i = 0; i < joints; ++i) {
-    if (params.robot.controlled_joints[i] != expected_joints[i]) {
-      throw std::runtime_error(
-          "controlled_joints must contain ordered xarm6_joint1..6");
+  // The OIM open_table pipeline needs at least a 6-DOF arm whose last
+  // controlled joint is the axisymmetric wrist roll about the stick axis
+  // (xArm6: xarm6_joint1..6; Franka Panda: panda_joint1..7). Ordered joint
+  // names come from the config; ValidateXarmPlant enforces that each one
+  // exists as a one-DOF revolute joint owning its actuator.
+  if (joints < 6) {
+    throw std::runtime_error(
+        "OIM open_table requires at least six controlled joints");
+  }
+  for (const std::string& name : params.robot.controlled_joints) {
+    if (name.empty()) {
+      throw std::runtime_error("controlled_joints must be nonempty names");
     }
   }
   if (std::set<std::string>(params.robot.controlled_joints.begin(),
