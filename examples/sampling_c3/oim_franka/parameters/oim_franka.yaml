@@ -147,9 +147,14 @@ full_sampling_c3plus:
   input_cost_scale: 1.0
   consensus_cost_scale: 0.01
   projection_cost_scale: 0.26
+  # Object-position cost is asymmetric for the Franka: the open_table task
+  # moves the T in y and yaw while the acceptance corridor polices lateral x
+  # drift, so object-x motion is priced 4x object-y (800 vs 200; Push-T
+  # baseline was symmetric 200/200/120). Measured pre-change first-push
+  # drift straddled the 5 mm corridor at 0.8-6.1 mm; at 800 it was 1.4-5.1 mm.
   state_cost_diagonal: [0.01, 0.01, 0.01,
                         0.1, 0.1, 0.1, 0.1,
-                        200.0, 200.0, 120.0,
+                        800.0, 200.0, 120.0,
                         5.0, 5.0, 5.0,
                         0.05, 0.05, 0.05,
                         0.05, 0.05, 0.05]
