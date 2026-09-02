@@ -21,7 +21,7 @@
 #include <drake/systems/lcm/lcm_subscriber_system.h>
 #include <gflags/gflags.h>
 
-#include "examples/sampling_c3/oim_t/xarm6_process_common.h"
+#include "examples/sampling_c3/oim_franka/franka_process_common.h"
 #include "systems/controllers/osc/external_force_tracking_data.h"
 #include "systems/controllers/osc/operational_space_control.h"
 #include "systems/controllers/osc/joint_space_tracking_data.h"
@@ -31,7 +31,7 @@
 #include "systems/framework/output_vector.h"
 #include "systems/robot_lcm_systems.h"
 
-DEFINE_string(config, "examples/sampling_c3/oim_t/parameters/oim_t.yaml",
+DEFINE_string(config, "examples/sampling_c3/oim_franka/parameters/oim_franka.yaml",
               "Canonical OIM-T configuration");
 DEFINE_string(lcm_url, "udpm://239.255.76.67:7667?ttl=0", "LCM URL");
 DEFINE_bool(track_tip_orientation, true,
@@ -907,15 +907,11 @@ int DoMain(int argc, char* argv[]) {
   tracking->SetCmdAccelerationBounds(
       -task_acceleration_limits, task_acceleration_limits);
   osc->AddTrackingData(std::move(tracking));
-  const auto wrist_roll_it = std::find(
-      params.robot.controlled_joints.begin(),
-      params.robot.controlled_joints.end(), "xarm6_joint6");
-  if (wrist_roll_it == params.robot.controlled_joints.end()) {
-    throw std::runtime_error(
-        "xArm6 OSC configuration is missing xarm6_joint6");
-  }
-  const int wrist_roll_index = static_cast<int>(std::distance(
-      params.robot.controlled_joints.begin(), wrist_roll_it));
+  // The wrist roll is the last controlled joint by convention: the joint
+  // whose axis coincides with the axisymmetric stick (xarm6_joint6 on the
+  // xArm6, panda_joint7 on the Franka Panda).
+  const int wrist_roll_index =
+      static_cast<int>(params.robot.controlled_joints.size()) - 1;
   auto* wrist_roll_source =
       builder.AddSystem<Xarm6WristRollTrajectorySource>(
           params.robot.home_positions[wrist_roll_index]);
@@ -928,7 +924,8 @@ int DoMain(int argc, char* argv[]) {
           Eigen::MatrixXd::Identity(1, 1),
       plant, plant);
   wrist_roll_tracking->AddJointsToTrack(
-      {*wrist_roll_it}, {*wrist_roll_it + "dot"});
+      {params.robot.controlled_joints[wrist_roll_index]},
+      {params.robot.controlled_joints[wrist_roll_index] + "dot"});
   osc->AddTrackingData(std::move(wrist_roll_tracking));
   auto translation_only_tracking = std::make_unique<
       systems::controllers::TransTaskSpaceTrackingData>(

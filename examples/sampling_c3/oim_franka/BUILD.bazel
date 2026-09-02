@@ -1,0 +1,71 @@
+# OIM open_table on the Drake-native Franka Panda. A self-contained sibling
+# of //examples/sampling_c3/oim_t: sources are franka_* forks of the xArm6
+# processes (actuators adopted from the URDF transmissions; joint names, the
+# wrist roll, and actuator names resolved from the config/plant instead of
+# xArm6 conventions). Nothing here is shared with or modifies the xArm6
+# pipeline.
+
+cc_binary(
+    name = "oim_franka_config_check",
+    srcs = ["oim_franka_config_check.cc"],
+    data = [
+        "parameters/oim_franka.yaml",
+        "//examples/sampling_c3:urdfs",
+    ],
+    deps = [
+        ":franka_process_common",
+        "@drake//:drake_shared_library",
+        "@gflags",
+    ],
+)
+
+cc_library(
+    name = "franka_process_common",
+    srcs = ["franka_process_common.cc"],
+    hdrs = ["franka_process_common.h"],
+    deps = [
+        "//examples/sampling_c3/parameter_headers:oim_t_params",
+        "@drake//:drake_shared_library",
+    ],
+)
+
+cc_library(
+    name = "franka_full_sampling_c3plus",
+    srcs = ["franka_full_sampling_c3plus.cc"],
+    hdrs = ["franka_full_sampling_c3plus.h"],
+    deps = [
+        "//examples/sampling_c3:sampling_c3_utils",
+        "//examples/sampling_c3/parameter_headers:oim_t_params",
+        "@c3//:libc3",
+        "@c3//core:traj_eval",
+        "@drake//:drake_shared_library",
+    ],
+)
+
+[cc_binary(
+    name = process,
+    srcs = [process + ".cc"],
+    data = [
+        "parameters/oim_franka.yaml",
+        "//examples/sampling_c3:urdfs",
+    ],
+    deps = [
+        ":franka_full_sampling_c3plus",
+        ":franka_process_common",
+        "//lcm:lcm_trajectory_saver",
+        "//systems:robot_lcm_systems",
+        "//systems/framework:lcm_driven_loop",
+        "//systems/controllers/osc:operational_space_control",
+        "//systems/controllers/osc:external_force_tracking_data",
+        "//systems/controllers/osc:joint_space_tracking_data",
+        "//systems/controllers/osc:rot_space_tracking_data",
+        "//systems/controllers/osc:trans_space_tracking_data",
+        "@drake//:drake_shared_library",
+        "@c3//:libc3",
+        "@gflags",
+    ],
+) for process in [
+    "franka_sim",
+    "franka_osc_controller",
+    "franka_sampling_c3_controller",
+]]

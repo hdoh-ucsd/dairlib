@@ -1,6 +1,7 @@
-#include "examples/sampling_c3/oim_t/xarm6_process_common.h"
+#include "examples/sampling_c3/oim_franka/franka_process_common.h"
 
 #include <array>
+#include <map>
 #include <set>
 #include <stdexcept>
 
@@ -24,14 +25,18 @@ void DemandSize(const Eigen::VectorXd& value, int expected,
 OimTParams LoadAndValidateConfig(const std::string& path) {
   OimTParams params = drake::yaml::LoadYamlFile<OimTParams>(path);
   const int joints = params.robot.controlled_joints.size();
-  if (joints != 6) throw std::runtime_error("OIM xArm6 requires six joints");
-  const std::array<std::string, 6> expected_joints = {
-      "xarm6_joint1", "xarm6_joint2", "xarm6_joint3",
-      "xarm6_joint4", "xarm6_joint5", "xarm6_joint6"};
-  for (int i = 0; i < joints; ++i) {
-    if (params.robot.controlled_joints[i] != expected_joints[i]) {
-      throw std::runtime_error(
-          "controlled_joints must contain ordered xarm6_joint1..6");
+  // The OIM open_table pipeline needs at least a 6-DOF arm whose last
+  // controlled joint is the axisymmetric wrist roll about the stick axis
+  // (xArm6: xarm6_joint1..6; Franka Panda: panda_joint1..7). Ordered joint
+  // names come from the config; ValidateXarmPlant enforces that each one
+  // exists as a one-DOF revolute joint owning its actuator.
+  if (joints < 6) {
+    throw std::runtime_error(
+        "OIM open_table requires at least six controlled joints");
+  }
+  for (const std::string& name : params.robot.controlled_joints) {
+    if (name.empty()) {
+      throw std::runtime_error("controlled_joints must be nonempty names");
     }
   }
   if (std::set<std::string>(params.robot.controlled_joints.begin(),
@@ -152,9 +157,16 @@ OimTParams LoadAndValidateConfig(const std::string& path) {
 
 void AddXarmActuators(const OimTParams& params,
                       drake::multibody::MultibodyPlant<double>* plant) {
-  // Drake's pinned MJCF parser does not import MuJoCo velocity actuators.
-  // Recreate one torque input per controlled joint; the controller remains
-  // responsible for enforcing the YAML effort and velocity limits.
+  // Two supported robot-model conventions:
+  //  - MJCF (xArm6): Drake's pinned MJCF parser does not import MuJoCo
+  //    velocity actuators, so recreate one torque input per controlled joint
+  //    and apply the YAML velocity limits to the joints.
+  //  - URDF with transmissions (Franka Panda): the model is authoritative —
+  //    Drake already created the actuators with the vendor effort limits,
+  //    gear ratios, and reflected rotor inertias. Adopt them unchanged.
+  if (plant->num_actuators() > 0) {
+    return;
+  }
   const int num_joints = params.robot.controlled_joints.size();
   for (int i = 0; i < num_joints; ++i) {
     const std::string& name = params.robot.controlled_joints[i];
@@ -199,15 +211,27 @@ void ValidateXarmPlant(const drake::multibody::MultibodyPlant<double>& plant,
     throw std::runtime_error(
         "xArm model actuator count must match the configured six joints");
   }
-  for (int i = 0; i < plant.num_actuators(); ++i) {
-    const auto& actuator = plant.GetJointActuatorByName(
-        params.robot.controlled_joints[i] + "_actuator");
-    if (actuator.joint().name() != params.robot.controlled_joints[i]) {
-      throw std::runtime_error("xArm actuator-to-joint mapping mismatch");
+  // Match actuators to controlled joints by the joint they drive, not by an
+  // actuator naming convention: MJCF-path actuators are named
+  // "<joint>_actuator" while URDF transmissions carry vendor motor names.
+  std::map<std::string, drake::multibody::JointActuatorIndex> joint_to_actuator;
+  for (drake::multibody::JointActuatorIndex index :
+       plant.GetJointActuatorIndices()) {
+    joint_to_actuator.emplace(
+        plant.get_joint_actuator(index).joint().name(), index);
+  }
+  for (int i = 0; i < static_cast<int>(params.robot.controlled_joints.size());
+       ++i) {
+    const auto it = joint_to_actuator.find(params.robot.controlled_joints[i]);
+    if (it == joint_to_actuator.end()) {
+      throw std::runtime_error("no actuator drives configured joint " +
+                               params.robot.controlled_joints[i]);
     }
+    const auto& actuator = plant.get_joint_actuator(it->second);
     if (actuator.effort_limit() !=
         params.robot.effort_limits[i]) {
-      throw std::runtime_error("xArm actuator effort limit mismatch");
+      throw std::runtime_error("actuator effort limit mismatch on " +
+                               params.robot.controlled_joints[i]);
     }
   }
 }
