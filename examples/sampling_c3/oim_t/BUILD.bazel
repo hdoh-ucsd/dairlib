@@ -1,7 +1,7 @@
 cc_binary(
     name = "oim_t_config_check",
     srcs = ["oim_t_config_check.cc"],
-    data = ["parameters/oim_t.yaml", "parameters/oim_t_franka.yaml"],
+    data = ["parameters/oim_t.yaml"],
     deps = [
         ":xarm6_process_common",
         "@drake//:drake_shared_library",
@@ -38,7 +38,6 @@ cc_test(
     srcs = ["test/xarm6_full_sampling_c3plus_test.cc"],
     data = [
         "parameters/oim_t.yaml",
-        "parameters/oim_t_franka.yaml",
         "//examples/sampling_c3:urdfs",
     ],
     deps = [
@@ -53,7 +52,6 @@ cc_test(
     srcs = ["test/xarm6_open_table_test.cc"],
     data = [
         "parameters/oim_t.yaml",
-        "parameters/oim_t_franka.yaml",
         "//examples/sampling_c3:urdfs",
     ],
     deps = [
@@ -68,7 +66,6 @@ cc_test(
     srcs = [process + ".cc"],
     data = [
         "parameters/oim_t.yaml",
-        "parameters/oim_t_franka.yaml",
         "//examples/sampling_c3:urdfs",
     ],
     deps = [
