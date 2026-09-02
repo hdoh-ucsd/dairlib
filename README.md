@@ -115,13 +115,36 @@ Success is a terminal tolerance check on both goal variables simultaneously
 
 ```text
 e_p = || (x, y) - (x_g, y_g) ||_2         <  0.05 m
-e_θ = | wrap(θ - θ_g) |                   <  0.10 rad,   wrap(a) = atan2(sin a, cos a)
+e_θ = | wrap(θ - θ_g) |                   <  0.10 rad
 ```
 
-The yaw is extracted from the measured quaternion and wrapped exactly as in
-`EvaluateXarmFullSamplingC3PlanarSettle`
-(`xarm6_full_sampling_c3plus.cc:92-107`). The task therefore requires roughly
-0.8 m of translation plus a ~π reorientation of the T.
+The orientation error is computed in three steps
+(`xarm6_full_sampling_c3plus.cc:92-107`): the measured quaternion
+`q_WO = (w, x, y, z)` is normalized and reduced to its heading with the
+standard ZYX yaw formula `θ = atan2(2(wz + xy), 1 − 2(y² + z²))`; the raw
+difference `Δ = θ − θ_g` is formed; and `Δ` is wrapped with
+
+```text
+wrap(Δ) = atan2(sin Δ, cos Δ)   ∈ (−π, π]
+```
+
+The raw `Δ` is meaningless as a distance because yaw lives on the circle S¹:
+`θ` and `θ + 2π` are the same physical heading, so `Δ` can be off by any
+multiple of `2π` depending on the `atan2` branch. Passing `Δ` through
+`sin`/`cos` erases every multiple of `2π`, and `atan2` rebuilds the unique
+representative in `(−π, π]` — the shortest signed arc from `θ_g` to `θ`, with
+no modulo edge cases and `|wrap(Δ)| ≤ π` always.
+
+This matters for `open_table` specifically because `θ_g = 3.1416 ≈ π` sits on
+the branch cut: a nearly-converged T can be measured at `θ = +3.10` on one
+tick and `θ = −3.10` on the next. Unwrapped, the second reads
+`|Δ| = 6.24 rad` — a false failure; wrapped, both read `e_θ ≈ 0.04 rad` and
+pass the 0.10 rad gate. Roll and pitch are excluded from `e_θ` by design (a
+toppled T is caught by the settle check's tilt angle
+`ψ = acos((R_WO ẑ)·ẑ)`), and the same wrap is used for per-cycle yaw-progress
+accounting (`xarm6_full_sampling_c3plus.cc:836-846`). The task therefore
+requires roughly 0.8 m of translation plus a genuine ~π reorientation of
+the T.
 
 #### What we optimize
 
