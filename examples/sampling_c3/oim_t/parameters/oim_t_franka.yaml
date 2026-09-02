@@ -16,7 +16,13 @@ robot:
   # (the URDF's transmissions are authoritative for the plant actuators; these
   # mirror them for the controller-side clamps).
   effort_limits: [87.0, 87.0, 87.0, 87.0, 12.0, 12.0, 12.0]
-  velocity_limits: [2.175, 2.175, 2.175, 2.175, 2.61, 2.61, 2.61]
+  # Operating velocity clamp for the servo bridge, derived from the task's
+  # C3 end-effector velocity bound (0.14 m/s) with margin through the arm
+  # Jacobian -- NOT the vendor joint maxima (2.175/2.61 rad/s). The unclamped
+  # native limits authorize impulsive stick lunges when task-space tracking
+  # error releases through breaking static friction (measured: 22 mm tip jump
+  # in 100 ms knocking the object 26 mm off-corridor).
+  velocity_limits: [0.45, 0.45, 0.45, 0.45, 0.45, 0.45, 0.45]
   # Velocity-servo gains sized to the Franka's reflected rotor inertia
   # (gear 100, ~0.2 kg m^2 apparent): modest bandwidth, wide torque headroom.
   velocity_servo_gains: [50.0, 50.0, 50.0, 50.0, 25.0, 25.0, 25.0]
@@ -59,7 +65,7 @@ controller:
   control_loop_delay_ms: 0
   # DAIRLab Sampling-C3 OSC translational gains, carried over unchanged.
   task_space_kp: [200.0, 200.0, 200.0]
-  task_space_kd: [20.0, 20.0, 20.0]
+  task_space_kd: [40.0, 40.0, 40.0]
   # Weak six-joint posture objective derived from config/osc_xarm6_oim.yaml. It is
   # latched at descent entry and remains two orders below Cartesian tracking.
   descent_posture_kp: 10.0
