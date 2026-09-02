@@ -154,6 +154,164 @@ double FullSamplingC3LateralReserveLimit(
                   lateral_drift_tolerance - contact_activation_tolerance);
 }
 
+bool IsFullSamplingC3LateralReserveExhausted(
+    double measured_object_x, double goal_x, double lateral_reserve_limit) {
+  if (!std::isfinite(measured_object_x) || !std::isfinite(goal_x) ||
+      !std::isfinite(lateral_reserve_limit) ||
+      lateral_reserve_limit < 0.0) {
+    throw std::invalid_argument(
+        "full Sampling-C3+ lateral reserve inputs are invalid");
+  }
+  return std::abs(measured_object_x - goal_x) > lateral_reserve_limit;
+}
+
+bool IsFullSamplingC3InitialCandidateAdmitted(
+    bool lateral_gate, bool swept_capsule_clear, bool ik_reached) {
+  return lateral_gate && swept_capsule_clear && ik_reached;
+}
+
+bool IsFullSamplingC3ContactEngagementComplete(double signed_contact_gap) {
+  if (!std::isfinite(signed_contact_gap)) {
+    throw std::invalid_argument(
+        "full Sampling-C3+ signed contact gap is invalid");
+  }
+  return signed_contact_gap <= 0.0;
+}
+
+bool IsFullSamplingC3LatchedContactContinuation(
+    bool engagement_latched,
+    const XarmFullSamplingC3ContactDwellReceipt& receipt) {
+  return engagement_latched && receipt.contact_gap_accepted;
+}
+
+bool IsFullSamplingC3ContactLateralRejected(
+    double measured_object_x, double goal_x,
+    double cycle_entry_lateral_error, double lateral_reserve_limit,
+    double lateral_drift_tolerance, double contact_activation_tolerance,
+    bool bounded_recovery_mode) {
+  if (!std::isfinite(measured_object_x) || !std::isfinite(goal_x) ||
+      !std::isfinite(cycle_entry_lateral_error) ||
+      !std::isfinite(lateral_reserve_limit) ||
+      !std::isfinite(lateral_drift_tolerance) ||
+      !std::isfinite(contact_activation_tolerance) ||
+      cycle_entry_lateral_error < 0.0 || lateral_reserve_limit < 0.0 ||
+      lateral_drift_tolerance < 0.0 ||
+      contact_activation_tolerance < 0.0) {
+    throw std::invalid_argument(
+        "full Sampling-C3+ contact lateral inputs are invalid");
+  }
+  const double measured_lateral_error =
+      std::abs(measured_object_x - goal_x);
+  if (!bounded_recovery_mode) {
+    return measured_lateral_error > lateral_reserve_limit;
+  }
+  return measured_lateral_error > lateral_drift_tolerance ||
+      measured_lateral_error >
+          cycle_entry_lateral_error + contact_activation_tolerance;
+}
+
+bool IsFullSamplingC3PostureStepProgressive(
+    double current_tip_error, double target_tip_error,
+    double allowed_regression) {
+  if (!std::isfinite(current_tip_error) ||
+      !std::isfinite(target_tip_error) || current_tip_error < 0.0 ||
+      target_tip_error < 0.0 || !std::isfinite(allowed_regression) ||
+      allowed_regression < 0.0) {
+    throw std::invalid_argument(
+        "full Sampling-C3+ posture-step errors are invalid");
+  }
+  return target_tip_error <= current_tip_error + allowed_regression;
+}
+
+Eigen::VectorXd LimitXarmFullSamplingC3JointStepPreservingDirection(
+    const Eigen::VectorXd& joint_step,
+    const Eigen::VectorXd& velocity_limits, double planning_time_step) {
+  if (joint_step.size() == 0 ||
+      joint_step.size() != velocity_limits.size() ||
+      !joint_step.allFinite() || !velocity_limits.allFinite() ||
+      (velocity_limits.array() <= 0.0).any() ||
+      !std::isfinite(planning_time_step) || planning_time_step <= 0.0) {
+    throw std::invalid_argument(
+        "full Sampling-C3+ joint-step limiter inputs are invalid");
+  }
+  const double saturation =
+      (joint_step.array().abs() /
+       (velocity_limits.array() * planning_time_step)).maxCoeff();
+  if (saturation <= 1.0) {
+    return joint_step;
+  }
+  return joint_step / saturation;
+}
+
+XarmFullSamplingC3PhysicalDwellJoinReceipt
+EvaluateXarmFullSamplingC3PhysicalDwellJoin(
+    bool receipt_present, int64_t receipt_utime, int64_t now_utime,
+    int64_t staleness_limit_us, bool raw_contact_active,
+    const Eigen::Vector2d& contact_point_xy_W,
+    const Eigen::Vector2d& force_on_object_xy_W,
+    const Eigen::Vector2d& selected_boundary_W,
+    const Eigen::Vector2d& selected_outward_normal_W,
+    double pusher_radius, double contact_activation_tolerance) {
+  if (staleness_limit_us <= 0 || !contact_point_xy_W.allFinite() ||
+      !force_on_object_xy_W.allFinite() ||
+      !selected_boundary_W.allFinite() ||
+      !selected_outward_normal_W.allFinite() ||
+      selected_outward_normal_W.norm() <= 1.0e-12 ||
+      !std::isfinite(pusher_radius) || pusher_radius <= 0.0 ||
+      !std::isfinite(contact_activation_tolerance) ||
+      contact_activation_tolerance < 0.0) {
+    throw std::invalid_argument(
+        "full Sampling-C3+ physical dwell-join inputs are invalid");
+  }
+  XarmFullSamplingC3PhysicalDwellJoinReceipt join;
+  join.receipt_present = receipt_present;
+  join.receipt_fresh = receipt_present &&
+      (now_utime - receipt_utime) <= staleness_limit_us;
+  join.contact_active = receipt_present && raw_contact_active;
+  join.face_distance =
+      (contact_point_xy_W - selected_boundary_W).norm();
+  join.face_identity = join.face_distance <=
+      2.0 * pusher_radius + contact_activation_tolerance;
+  join.inward_normal_force = -selected_outward_normal_W.normalized().dot(
+      force_on_object_xy_W);
+  join.normal_polarity = join.inward_normal_force > 0.0;
+  join.accepted = join.receipt_fresh && join.contact_active &&
+      join.face_identity && join.normal_polarity;
+  return join;
+}
+
+bool ShouldPreserveXarmFullSamplingC3RepositionTarget(
+    bool previous_available, bool previous_invalidated,
+    double previous_cost, double best_cost, double hysteresis_fraction) {
+  if (!std::isfinite(previous_cost) || previous_cost < 0.0 ||
+      !std::isfinite(best_cost) || best_cost < 0.0 ||
+      !std::isfinite(hysteresis_fraction) || hysteresis_fraction < 0.0 ||
+      hysteresis_fraction >= 1.0) {
+    throw std::invalid_argument(
+        "full Sampling-C3+ target-hysteresis inputs are invalid");
+  }
+  return previous_available && !previous_invalidated &&
+      previous_cost < best_cost + hysteresis_fraction * previous_cost;
+}
+
+double XarmFullSamplingC3CommandDuration(
+    double distance, double speed, double planning_dt) {
+  if (!std::isfinite(distance) || distance < 0.0 ||
+      !std::isfinite(speed) || speed <= 0.0 ||
+      !std::isfinite(planning_dt) || planning_dt <= 0.0) {
+    throw std::invalid_argument(
+        "full Sampling-C3+ command-duration inputs are invalid");
+  }
+  return std::max(planning_dt, distance / speed);
+}
+
+bool ShouldReplaceXarmFullSamplingC3ReleaseReferenceWithPrimary(
+    bool progress_lateral_rejected,
+    bool recovery_release_reference_active) {
+  return !progress_lateral_rejected &&
+      !recovery_release_reference_active;
+}
+
 bool IsFullSamplingC3CentralSideContact(
     double sample_height_O, double object_half_height, double pusher_radius) {
   if (!std::isfinite(sample_height_O) ||
@@ -164,6 +322,53 @@ bool IsFullSamplingC3CentralSideContact(
         "full Sampling-C3+ side-contact inputs are invalid");
   }
   return std::abs(sample_height_O) <= pusher_radius;
+}
+
+XarmPhysicalContactClassification ClassifyXarmPhysicalContact(
+    const Eigen::Vector3d& contact_point_W,
+    const Eigen::Vector3d& pusher_tip_W,
+    const Eigen::Vector3d& object_center_W,
+    double pusher_radius, double contact_activation_tolerance) {
+  if (!contact_point_W.allFinite() || !pusher_tip_W.allFinite() ||
+      !object_center_W.allFinite() || !std::isfinite(pusher_radius) ||
+      !std::isfinite(contact_activation_tolerance) || pusher_radius <= 0.0 ||
+      contact_activation_tolerance < 0.0) {
+    throw std::invalid_argument(
+        "xArm physical-contact classification inputs are invalid");
+  }
+  XarmPhysicalContactClassification receipt;
+  receipt.relative_height_m = contact_point_W.z() - object_center_W.z();
+  receipt.point_to_tip_m = (contact_point_W - pusher_tip_W).norm();
+  const double central_side_band =
+      pusher_radius + contact_activation_tolerance;
+  const bool central_side =
+      std::abs(receipt.relative_height_m) <= central_side_band;
+  const bool near_tip = receipt.point_to_tip_m <=
+      2.0 * pusher_radius + contact_activation_tolerance;
+  if (central_side && near_tip) {
+    receipt.contact_class = XarmPhysicalContactClass::kTipSideCandidate;
+  } else if (central_side) {
+    receipt.contact_class = XarmPhysicalContactClass::kSideShaft;
+  } else if (receipt.relative_height_m > 0.0) {
+    receipt.contact_class = XarmPhysicalContactClass::kTopGraze;
+  } else {
+    receipt.contact_class = XarmPhysicalContactClass::kBottomGraze;
+  }
+  return receipt;
+}
+
+const char* XarmPhysicalContactClassName(XarmPhysicalContactClass value) {
+  switch (value) {
+    case XarmPhysicalContactClass::kTipSideCandidate:
+      return "tip_side_candidate";
+    case XarmPhysicalContactClass::kSideShaft:
+      return "side_shaft";
+    case XarmPhysicalContactClass::kTopGraze:
+      return "top_graze";
+    case XarmPhysicalContactClass::kBottomGraze:
+      return "bottom_graze";
+  }
+  return "unknown";
 }
 
 bool HasFullSamplingC3ContactDwellBudget(
@@ -181,12 +386,14 @@ EvaluateFullSamplingC3CycleBudget(
     int updates_used, int update_budget, int acquisition_ik_steps,
     double acquisition_ik_step_seconds, int execution_update_period_ms,
     int minimum_contact_steps,
-    const std::vector<int>& measured_release_recovery_updates) {
+    const std::vector<int>& measured_release_recovery_updates,
+    int minimum_acquisition_updates) {
   if (updates_used < 0 || update_budget < 0 ||
       updates_used > update_budget || acquisition_ik_steps < 0 ||
       !std::isfinite(acquisition_ik_step_seconds) ||
       acquisition_ik_step_seconds <= 0.0 ||
       execution_update_period_ms <= 0 || minimum_contact_steps < 0 ||
+      minimum_acquisition_updates < 0 ||
       measured_release_recovery_updates.empty() ||
       std::any_of(measured_release_recovery_updates.begin(),
                   measured_release_recovery_updates.end(),
@@ -206,8 +413,9 @@ EvaluateFullSamplingC3CycleBudget(
 
   XarmFullSamplingC3CycleBudgetReceipt receipt;
   receipt.remaining_updates = update_budget - updates_used;
-  receipt.acquisition_updates =
-      static_cast<int>(std::ceil(acquisition_execution_updates));
+  receipt.acquisition_updates = std::max(
+      static_cast<int>(std::ceil(acquisition_execution_updates)),
+      minimum_acquisition_updates);
   receipt.contact_dwell_updates = minimum_contact_steps;
   receipt.release_recovery_updates = *std::max_element(
       measured_release_recovery_updates.begin(),
@@ -224,6 +432,44 @@ EvaluateFullSamplingC3CycleBudget(
   receipt.required_updates = static_cast<int>(required_updates);
   receipt.accepted = receipt.remaining_updates > receipt.required_updates;
   return receipt;
+}
+
+XarmFullSamplingC3CycleBudgetReceipt
+EvaluateFullSamplingC3MeasuredContactPhaseCycleBudget(
+    int updates_used, int update_budget, int acquisition_ik_steps,
+    double acquisition_ik_step_seconds, int execution_update_period_ms,
+    int configured_contact_dwell_steps,
+    const std::vector<int>& measured_contact_phase_updates,
+    const std::vector<int>& measured_release_recovery_updates,
+    const std::vector<int>& measured_acquisition_updates) {
+  if (configured_contact_dwell_steps < 0 ||
+      std::any_of(measured_contact_phase_updates.begin(),
+                  measured_contact_phase_updates.end(),
+                  [](int updates) { return updates <= 0; }) ||
+      std::any_of(measured_acquisition_updates.begin(),
+                  measured_acquisition_updates.end(),
+                  [](int updates) { return updates <= 0; })) {
+    throw std::invalid_argument(
+        "full Sampling-C3+ measured dwell receipts are invalid");
+  }
+  const int reserved_contact_dwell =
+      measured_contact_phase_updates.empty()
+          ? configured_contact_dwell_steps
+          : std::min(
+                configured_contact_dwell_steps,
+                *std::max_element(
+                    measured_contact_phase_updates.begin(),
+                    measured_contact_phase_updates.end()));
+  const int reserved_acquisition_floor =
+      measured_acquisition_updates.empty()
+          ? 0
+          : *std::max_element(measured_acquisition_updates.begin(),
+                              measured_acquisition_updates.end());
+  return EvaluateFullSamplingC3CycleBudget(
+      updates_used, update_budget, acquisition_ik_steps,
+      acquisition_ik_step_seconds, execution_update_period_ms,
+      reserved_contact_dwell, measured_release_recovery_updates,
+      reserved_acquisition_floor);
 }
 
 XarmFullSamplingC3AcquisitionConformanceReceipt
@@ -288,6 +534,39 @@ EvaluateFullSamplingC3WaypointConformancePersistence(
   return receipt;
 }
 
+XarmFullSamplingC3PlanningHandoffReceipt
+EvaluateFullSamplingC3PlanningHandoff(
+    const Eigen::Vector3d& planning_object_pose,
+    const Eigen::Vector3d& measured_object_pose,
+    bool swept_capsule_clear, bool ik_reached,
+    double maximum_translation_drift,
+    double maximum_orientation_drift) {
+  if (!planning_object_pose.allFinite() ||
+      !measured_object_pose.allFinite() ||
+      !std::isfinite(maximum_translation_drift) ||
+      !std::isfinite(maximum_orientation_drift) ||
+      maximum_translation_drift < 0.0 ||
+      maximum_orientation_drift < 0.0) {
+    throw std::invalid_argument("planning handoff inputs are invalid");
+  }
+  XarmFullSamplingC3PlanningHandoffReceipt receipt;
+  receipt.object_translation_drift =
+      (measured_object_pose.head<2>() -
+       planning_object_pose.head<2>()).norm();
+  receipt.object_orientation_drift = std::abs(std::atan2(
+      std::sin(measured_object_pose.z() - planning_object_pose.z()),
+      std::cos(measured_object_pose.z() - planning_object_pose.z())));
+  receipt.object_translation_conformant =
+      receipt.object_translation_drift <= maximum_translation_drift;
+  receipt.object_orientation_conformant =
+      receipt.object_orientation_drift <= maximum_orientation_drift;
+  receipt.acquisition_conformant = swept_capsule_clear && ik_reached;
+  receipt.accepted = receipt.object_translation_conformant &&
+      receipt.object_orientation_conformant &&
+      receipt.acquisition_conformant;
+  return receipt;
+}
+
 bool ShouldRetryXarmFullSamplingC3RecoveryResponse(
     bool release_cleared, bool lateral_recovered, bool crossed_goal,
     bool wrong_polarity, bool contact_lost, bool object_not_upright) {
@@ -303,12 +582,36 @@ bool ShouldReplanXarmFullSamplingC3ReleasedExecutionFailure(
 }
 
 bool ShouldContinueXarmFullSamplingC3BoundedCorridorState(
-    bool productive_cycle_credited, bool post_recovery_task_accepted,
+    bool productive_cycle_credited, bool /*post_recovery_task_accepted*/,
     bool lateral_corridor_accepted, bool component_transaction_accepted,
     bool release_verified) {
-  return !productive_cycle_credited && post_recovery_task_accepted &&
-      lateral_corridor_accepted && component_transaction_accepted &&
-      release_verified;
+  return !productive_cycle_credited && lateral_corridor_accepted &&
+      component_transaction_accepted && release_verified;
+}
+
+bool ShouldContinueXarmFullSamplingC3BoundedNoResponse(
+    bool prior_bounded_handoff, bool release_verified, bool object_upright,
+    bool translation_nonregressive, bool orientation_nonregressive,
+    double translation_progress, double orientation_progress,
+    double minimum_translation_progress, double minimum_orientation_progress,
+    double lateral_error, double lateral_drift_tolerance) {
+  if (!std::isfinite(translation_progress) ||
+      !std::isfinite(orientation_progress) ||
+      !std::isfinite(minimum_translation_progress) ||
+      !std::isfinite(minimum_orientation_progress) ||
+      !std::isfinite(lateral_error) ||
+      !std::isfinite(lateral_drift_tolerance) ||
+      minimum_translation_progress <= 0.0 ||
+      minimum_orientation_progress <= 0.0 || lateral_error < 0.0 ||
+      lateral_drift_tolerance < 0.0) {
+    throw std::invalid_argument(
+        "bounded no-response continuation inputs are invalid");
+  }
+  return prior_bounded_handoff && release_verified && object_upright &&
+      translation_nonregressive && orientation_nonregressive &&
+      std::abs(translation_progress) < minimum_translation_progress &&
+      std::abs(orientation_progress) < minimum_orientation_progress &&
+      lateral_error <= lateral_drift_tolerance;
 }
 
 Eigen::VectorXd CanonicalizeXarmPeriodicIkSolutionNearestMeasured(
@@ -386,6 +689,134 @@ bool IsFullSamplingC3WrongPolarityResponse(
           (measured_signed_error - start_signed_error) > 0.0;
 }
 
+XarmFullSamplingC3ContactDwellReceipt
+EvaluateFullSamplingC3ContactDwellContinuation(
+    const Eigen::Vector3d& active_contact_target_W,
+    const Eigen::Vector3d& measured_tip_W,
+    const Eigen::Vector3d& measured_object_pose,
+    const Eigen::Vector2d& contact_point_O,
+    const Eigen::Vector2d& contact_normal_O,
+    double pusher_radius, double contact_activation_tolerance) {
+  if (!active_contact_target_W.allFinite() ||
+      !measured_tip_W.allFinite() || !measured_object_pose.allFinite() ||
+      !contact_point_O.allFinite() || !contact_normal_O.allFinite() ||
+      !std::isfinite(pusher_radius) || pusher_radius <= 0.0 ||
+      !std::isfinite(contact_activation_tolerance) ||
+      contact_activation_tolerance < 0.0 ||
+      contact_normal_O.norm() <= 0.0) {
+    throw std::invalid_argument(
+        "contact dwell inputs must be finite with valid geometry");
+  }
+  const Eigen::Vector2d normal_O = contact_normal_O.normalized();
+  const Eigen::Rotation2Dd R_WO(measured_object_pose.z());
+  const Eigen::Vector2d normal_W = R_WO * normal_O;
+  const Eigen::Vector2d boundary_W = measured_object_pose.head<2>() +
+      R_WO * contact_point_O;
+  XarmFullSamplingC3ContactDwellReceipt receipt;
+  receipt.tip_hold_error =
+      (measured_tip_W - active_contact_target_W).norm();
+  receipt.signed_contact_gap = normal_W.dot(
+      measured_tip_W.head<2>() - boundary_W) - pusher_radius;
+  receipt.tip_hold_conformant =
+      receipt.tip_hold_error <= contact_activation_tolerance;
+  receipt.contact_gap_accepted =
+      receipt.signed_contact_gap <= contact_activation_tolerance;
+  // A tip can move outside the nominal activation ball while it remains
+  // physically engaged on the penetrating side of the face. Preserve that
+  // measured contact; fail closed when the face separates, or when hold
+  // divergence occurs on the separating side before the gap bound is crossed.
+  receipt.contact_continuation = receipt.contact_gap_accepted &&
+      (receipt.tip_hold_conformant || receipt.signed_contact_gap <= 0.0);
+  return receipt;
+}
+
+XarmFullSamplingC3MeasuredResponseCompletionReceipt
+EvaluateFullSamplingC3MeasuredResponseCompletion(
+    const Eigen::Vector3d& response_start_object_pose,
+    const Eigen::Vector3d& previous_object_pose,
+    const Eigen::Vector3d& measured_object_pose,
+    const Eigen::Vector3d& goal_pose,
+    bool contact_continuation, bool object_upright,
+    int prior_consecutive_bounded_updates,
+    int required_persistence_updates,
+    double minimum_translation_progress,
+    double minimum_yaw_progress,
+    double lateral_reserve_limit) {
+  if (!response_start_object_pose.allFinite() ||
+      !previous_object_pose.allFinite() ||
+      !measured_object_pose.allFinite() || !goal_pose.allFinite() ||
+      prior_consecutive_bounded_updates < 0 ||
+      required_persistence_updates <= 0 ||
+      !std::isfinite(minimum_translation_progress) ||
+      !std::isfinite(minimum_yaw_progress) ||
+      !std::isfinite(lateral_reserve_limit) ||
+      minimum_translation_progress < 0.0 ||
+      minimum_yaw_progress < 0.0 || lateral_reserve_limit < 0.0) {
+    throw std::invalid_argument(
+        "full Sampling-C3+ response-completion inputs are invalid");
+  }
+  XarmFullSamplingC3MeasuredResponseCompletionReceipt receipt;
+  receipt.contact_continuation = contact_continuation;
+  receipt.object_upright = object_upright;
+  receipt.incremental_translation =
+      (measured_object_pose.head<2>() -
+       previous_object_pose.head<2>()).norm();
+  receipt.incremental_orientation = std::abs(std::remainder(
+      measured_object_pose.z() - previous_object_pose.z(),
+      2.0 * 3.14159265358979323846));
+  receipt.incremental_motion_bounded =
+      receipt.incremental_translation <= minimum_translation_progress &&
+      receipt.incremental_orientation <= minimum_yaw_progress;
+  receipt.lateral_error =
+      std::abs(measured_object_pose.x() - goal_pose.x());
+  receipt.lateral_accepted = receipt.lateral_error <= lateral_reserve_limit;
+  receipt.terminal_descent_accepted =
+      EvaluateFullSamplingC3TerminalDescent(
+          response_start_object_pose, measured_object_pose, goal_pose,
+          minimum_translation_progress, minimum_yaw_progress).accepted;
+  const bool bounded_response = receipt.contact_continuation &&
+      receipt.object_upright && receipt.lateral_accepted &&
+      receipt.terminal_descent_accepted &&
+      receipt.incremental_motion_bounded;
+  receipt.consecutive_bounded_updates = bounded_response
+      ? prior_consecutive_bounded_updates + 1
+      : 0;
+  receipt.persistence_accepted =
+      receipt.consecutive_bounded_updates >= required_persistence_updates;
+  receipt.completed = bounded_response && receipt.persistence_accepted;
+  return receipt;
+}
+
+bool ShouldRecordFullSamplingC3MeasuredContactPhase(
+    int contact_updates, bool contact_engaged, bool response_completed,
+    bool lateral_rejected, bool terminal_regression, bool upright_rejected,
+    bool contact_lost) {
+  if (contact_updates < 0) {
+    throw std::invalid_argument(
+        "full Sampling-C3+ measured contact updates are invalid");
+  }
+  return contact_updates > 0 && contact_engaged &&
+      (response_completed || lateral_rejected || terminal_regression ||
+       upright_rejected || contact_lost);
+}
+
+XarmFullSamplingC3LocalRepositionReceipt
+EvaluateFullSamplingC3LocalReposition(
+    bool local_capsule_clear, bool local_ik_reached,
+    bool anchored_capsule_clear, bool anchored_ik_reached) {
+  XarmFullSamplingC3LocalRepositionReceipt receipt;
+  receipt.local_capsule_clear = local_capsule_clear;
+  receipt.local_ik_reached = local_ik_reached;
+  receipt.anchored_capsule_clear = anchored_capsule_clear;
+  receipt.anchored_ik_reached = anchored_ik_reached;
+  receipt.local_accepted = local_capsule_clear && local_ik_reached;
+  receipt.anchored_accepted = anchored_capsule_clear && anchored_ik_reached;
+  receipt.accepted = receipt.local_accepted || receipt.anchored_accepted;
+  receipt.use_neutral_anchor =
+      !receipt.local_accepted && receipt.anchored_accepted;
+  return receipt;
+}
+
 XarmFullSamplingC3TerminalDescentReceipt
 EvaluateFullSamplingC3TerminalDescent(
     const Eigen::Vector3d& start_object_pose,
@@ -420,6 +851,69 @@ EvaluateFullSamplingC3TerminalDescent(
       receipt.orientation_progress >= minimum_orientation_progress;
   receipt.accepted = receipt.translation_nonregressive &&
       receipt.orientation_nonregressive && receipt.minimum_progress;
+  return receipt;
+}
+
+XarmFullSamplingC3MeasuredPolarityReceipt
+EvaluateFullSamplingC3MeasuredRecoveryPolarity(
+    const Eigen::Vector3d& recovery_start_object_pose,
+    const Eigen::Vector3d& measured_object_pose,
+    const Eigen::Vector3d& goal_object_pose,
+    double minimum_translation_motion,
+    double minimum_orientation_motion) {
+  if (!recovery_start_object_pose.allFinite() ||
+      !measured_object_pose.allFinite() || !goal_object_pose.allFinite() ||
+      !std::isfinite(minimum_translation_motion) ||
+      !std::isfinite(minimum_orientation_motion) ||
+      minimum_translation_motion < 0.0 ||
+      minimum_orientation_motion < 0.0) {
+    throw std::invalid_argument(
+        "measured recovery polarity inputs are invalid");
+  }
+  XarmFullSamplingC3MeasuredPolarityReceipt receipt;
+  receipt.terminal = EvaluateFullSamplingC3TerminalDescent(
+      recovery_start_object_pose, measured_object_pose, goal_object_pose,
+      0.0, 0.0);
+  receipt.measured_translation =
+      (measured_object_pose.head<2>() -
+       recovery_start_object_pose.head<2>()).norm();
+  receipt.measured_orientation = std::abs(std::atan2(
+      std::sin(measured_object_pose.z() -
+               recovery_start_object_pose.z()),
+      std::cos(measured_object_pose.z() -
+               recovery_start_object_pose.z())));
+  receipt.response_observed =
+      receipt.measured_translation >= minimum_translation_motion ||
+      receipt.measured_orientation >= minimum_orientation_motion;
+  receipt.wrong_polarity = receipt.response_observed &&
+      (!receipt.terminal.translation_nonregressive ||
+       !receipt.terminal.orientation_nonregressive);
+  return receipt;
+}
+
+XarmFullSamplingC3RecoveryAdmissionReceipt
+EvaluateFullSamplingC3RecoveryCandidateAdmission(
+    const Eigen::Vector3d& recovery_start_object_pose,
+    const Eigen::Vector3d& predicted_object_pose,
+    const Eigen::Vector3d& goal_object_pose,
+    double maximum_translation_debt,
+    double maximum_orientation_debt) {
+  if (!std::isfinite(maximum_translation_debt) ||
+      !std::isfinite(maximum_orientation_debt) ||
+      maximum_translation_debt < 0.0 ||
+      maximum_orientation_debt < 0.0) {
+    throw std::invalid_argument("recovery admission debt bounds are invalid");
+  }
+  XarmFullSamplingC3RecoveryAdmissionReceipt receipt;
+  receipt.terminal = EvaluateFullSamplingC3TerminalDescent(
+      recovery_start_object_pose, predicted_object_pose, goal_object_pose,
+      0.0, 0.0);
+  receipt.translation_debt_bounded =
+      receipt.terminal.translation_progress >= -maximum_translation_debt;
+  receipt.orientation_debt_bounded =
+      receipt.terminal.orientation_progress >= -maximum_orientation_debt;
+  receipt.accepted = receipt.translation_debt_bounded &&
+      receipt.orientation_debt_bounded;
   return receipt;
 }
 
@@ -996,6 +1490,45 @@ void AddDairlabSamplingConstraints(c3::C3* optimizer,
   }
 }
 
+void AddSampledContactStateConstraint(
+    c3::C3* optimizer, const Eigen::Vector2d& point_W,
+    const Eigen::Vector2d& normal_W, double sample_height_O,
+    double pusher_radius, double contact_activation_tolerance) {
+  if (optimizer == nullptr || !point_W.allFinite() ||
+      !normal_W.allFinite() || normal_W.norm() <= 0.0 ||
+      !std::isfinite(sample_height_O) || !std::isfinite(pusher_radius) ||
+      pusher_radius <= 0.0 ||
+      !std::isfinite(contact_activation_tolerance) ||
+      contact_activation_tolerance < 0.0) {
+    throw std::invalid_argument(
+        "sampled contact-state constraint inputs are invalid");
+  }
+  const Eigen::Vector2d unit_normal_W = normal_W.normalized();
+  Eigen::RowVectorXd normal_separation =
+      Eigen::RowVectorXd::Zero(XarmFullSamplingC3State::kSize);
+  normal_separation.segment<2>(XarmFullSamplingC3State::kPusherPosition) =
+      unit_normal_W.transpose();
+  normal_separation.segment<2>(XarmFullSamplingC3State::kObjectPosition) =
+      -unit_normal_W.transpose();
+  const double nominal_normal_separation =
+      unit_normal_W.dot(point_W) + pusher_radius;
+  optimizer->AddLinearConstraint(
+      normal_separation,
+      nominal_normal_separation - contact_activation_tolerance,
+      nominal_normal_separation + contact_activation_tolerance,
+      c3::ConstraintVariable::STATE);
+
+  Eigen::RowVectorXd pusher_height =
+      Eigen::RowVectorXd::Zero(XarmFullSamplingC3State::kSize);
+  pusher_height[XarmFullSamplingC3State::kPusherPosition + 2] = 1.0;
+  pusher_height[XarmFullSamplingC3State::kObjectPosition + 2] = -1.0;
+  optimizer->AddLinearConstraint(
+      pusher_height,
+      sample_height_O - contact_activation_tolerance,
+      sample_height_O + contact_activation_tolerance,
+      c3::ConstraintVariable::STATE);
+}
+
 double BoxViolation(const Eigen::Vector3d& value,
                     const Eigen::VectorXd& lower,
                     const Eigen::VectorXd& upper) {
@@ -1026,7 +1559,10 @@ namespace {
 
 XarmFullSamplingC3SolveReceipt RunSolveAtSampledPusher(
     const OimTParams& params,
-    const Eigen::Vector3d& sampled_pusher_W) {
+    const Eigen::Vector3d& sampled_pusher_W,
+    const Eigen::Vector2d& sample_point_W,
+    const Eigen::Vector2d& sample_normal_W,
+    double sample_height_O) {
   const SpatialLcsProblem problem =
       BuildSpatialLcsProblem(params, sampled_pusher_W);
   const int n = problem.lcs.num_states();
@@ -1083,6 +1619,10 @@ XarmFullSamplingC3SolveReceipt RunSolveAtSampledPusher(
 
   c3::C3Plus optimizer(problem.lcs, costs, desired, options);
   AddDairlabSamplingConstraints(&optimizer, config);
+  AddSampledContactStateConstraint(
+      &optimizer, sample_point_W, sample_normal_W, sample_height_O,
+      params.controller.pusher_radius,
+      params.controller.contact_activation_tolerance);
   const auto start = std::chrono::steady_clock::now();
   optimizer.Solve(problem.x0);
   const double elapsed = std::chrono::duration<double>(
@@ -1100,6 +1640,10 @@ XarmFullSamplingC3SolveReceipt RunSolveAtSampledPusher(
   c3::C3Plus diagnostic_optimizer(
       problem.lcs, costs, desired, diagnostic_options);
   AddDairlabSamplingConstraints(&diagnostic_optimizer, config);
+  AddSampledContactStateConstraint(
+      &diagnostic_optimizer, sample_point_W, sample_normal_W,
+      sample_height_O, params.controller.pusher_radius,
+      params.controller.contact_activation_tolerance);
   const auto diagnostic_start = std::chrono::steady_clock::now();
   diagnostic_optimizer.Solve(problem.x0);
   const double diagnostic_elapsed = std::chrono::duration<double>(
@@ -1213,6 +1757,7 @@ XarmFullSamplingC3SolveReceipt RunSolveAtSampledPusher(
   const std::vector<Eigen::VectorXd> dynamic_rollout =
       c3::traj_eval::TrajectoryEvaluator::SimulateLCSOverTrajectory(
           problem.x0, projected_inputs, problem.lcs, simulate_config);
+  std::vector<Eigen::VectorXd> execution_rollout = dynamic_rollout;
   receipt.dynamic_rollout_lcp_solved =
       dynamic_rollout.size() == static_cast<std::size_t>(N + 1);
   drake::solvers::MobyLcpSolver lcp_solver;
@@ -1298,6 +1843,40 @@ XarmFullSamplingC3SolveReceipt RunSolveAtSampledPusher(
       receipt.dynamic_rollout_complementarity_residual <=
           config.complementarity_residual_tolerance;
   receipt.dynamic_state_trajectory = dynamic_rollout;
+  if (execution_rollout.size() == static_cast<std::size_t>(N + 1) &&
+      z_solution.size() == static_cast<std::size_t>(N)) {
+    for (int knot = 0; knot < N; ++knot) {
+      execution_rollout[knot].segment<3>(
+          XarmFullSamplingC3State::kPusherPosition) =
+          z_solution[knot].segment<3>(
+              XarmFullSamplingC3State::kPusherPosition);
+      execution_rollout[knot].segment<3>(
+          XarmFullSamplingC3State::kPusherLinearVelocity) =
+          z_solution[knot].segment<3>(
+              XarmFullSamplingC3State::kPusherLinearVelocity);
+    }
+    const Eigen::VectorXd planned_terminal =
+        returned_lcs.A().back() * z_solution.back().head(n) +
+        returned_lcs.B().back() *
+            z_solution.back().segment(n + m, k) +
+        returned_lcs.D().back() * z_solution.back().segment(n, m) +
+        returned_lcs.d().back();
+    if (planned_terminal.size() == n && planned_terminal.allFinite()) {
+      execution_rollout.back().segment<3>(
+          XarmFullSamplingC3State::kPusherPosition) =
+          planned_terminal.segment<3>(
+              XarmFullSamplingC3State::kPusherPosition);
+      execution_rollout.back().segment<3>(
+          XarmFullSamplingC3State::kPusherLinearVelocity) =
+          planned_terminal.segment<3>(
+              XarmFullSamplingC3State::kPusherLinearVelocity);
+    } else {
+      execution_rollout.clear();
+    }
+  } else {
+    execution_rollout.clear();
+  }
+  receipt.execution_state_trajectory = std::move(execution_rollout);
   receipt.planned_input_trajectory = projected_inputs;
   receipt.accepted = receipt.finite &&
       receipt.initial_state_residual <= config.dynamics_residual_tolerance &&
@@ -1487,7 +2066,8 @@ XarmFullSamplingC3SolveReceipt RunXarmFullSamplingC3FirstSolve(
       normal_W * (params.controller.pusher_radius -
                   0.5 * params.controller.contact_activation_tolerance);
   sampled_pusher_W.z() = params.object.resting_height;
-  return RunSolveAtSampledPusher(params, sampled_pusher_W);
+  return RunSolveAtSampledPusher(
+      params, sampled_pusher_W, point_W, normal_W, sample.height_O);
 }
 
 namespace {
@@ -1517,8 +2097,9 @@ XarmFullSamplingC3BatchReceipt RunSampleBatch(
                     0.5 * params.controller.contact_activation_tolerance);
     candidate.initial_pusher_position_W.z() =
         params.object.resting_height + sample.height_O;
-    candidate.solve =
-        RunSolveAtSampledPusher(params, candidate.initial_pusher_position_W);
+    candidate.solve = RunSolveAtSampledPusher(
+        params, candidate.initial_pusher_position_W, point_W, normal_W,
+        sample.height_O);
     return candidate;
   };
   if (num_outer_threads <= 1) {
@@ -1675,7 +2256,9 @@ BuildXarmFullSamplingC3CorridorSafePrefix(
     double goal_object_x, double lateral_drift_tolerance) {
   XarmFullSamplingC3CorridorPrefixReceipt receipt;
   receipt.execution_candidate = candidate;
-  const auto& states = candidate.solve.dynamic_state_trajectory;
+  const auto& states = candidate.solve.execution_state_trajectory.empty()
+      ? candidate.solve.dynamic_state_trajectory
+      : candidate.solve.execution_state_trajectory;
   receipt.original_state_knots = states.size();
   if (!std::isfinite(goal_object_x) ||
       !std::isfinite(lateral_drift_tolerance) ||
@@ -1698,17 +2281,84 @@ BuildXarmFullSamplingC3CorridorSafePrefix(
   if (receipt.retained_state_knots < 2) return receipt;
 
   auto& execution_solve = receipt.execution_candidate.solve;
-  execution_solve.dynamic_state_trajectory.resize(
-      receipt.retained_state_knots);
+  if (execution_solve.execution_state_trajectory.empty()) {
+    execution_solve.dynamic_state_trajectory.resize(
+        receipt.retained_state_knots);
+  } else {
+    execution_solve.execution_state_trajectory.resize(
+        receipt.retained_state_knots);
+  }
   execution_solve.planned_input_trajectory.resize(
       receipt.retained_state_knots - 1);
-  const auto terminal = XarmFullSamplingC3State::Decode(
-      execution_solve.dynamic_state_trajectory.back());
+  const auto& retained_states =
+      execution_solve.execution_state_trajectory.empty()
+      ? execution_solve.dynamic_state_trajectory
+      : execution_solve.execution_state_trajectory;
+  const auto terminal =
+      XarmFullSamplingC3State::Decode(retained_states.back());
   execution_solve.dynamic_terminal_pusher_position =
       terminal.pusher_position_W;
   execution_solve.dynamic_terminal_object_position =
       terminal.object_position_W;
   receipt.accepted = true;
+  return receipt;
+}
+
+XarmFullSamplingC3PredictedContactPrefixReceipt
+EvaluateXarmFullSamplingC3PredictedContactPrefix(
+    const XarmFullSamplingC3CandidateReceipt& candidate,
+    double pusher_radius, double contact_activation_tolerance) {
+  if (!std::isfinite(pusher_radius) || pusher_radius <= 0.0 ||
+      !std::isfinite(contact_activation_tolerance) ||
+      contact_activation_tolerance < 0.0 ||
+      !candidate.sample_point_O.allFinite() ||
+      !candidate.sample_normal_O.allFinite() ||
+      candidate.sample_normal_O.norm() <= 0.0 ||
+      !std::isfinite(candidate.sample_height_O)) {
+    throw std::invalid_argument(
+        "predicted contact-prefix inputs are invalid");
+  }
+  XarmFullSamplingC3PredictedContactPrefixReceipt receipt;
+  const auto& states = candidate.solve.execution_state_trajectory.empty()
+      ? candidate.solve.dynamic_state_trajectory
+      : candidate.solve.execution_state_trajectory;
+  if (states.size() < 2) return receipt;
+  const Eigen::Vector2d normal_O =
+      candidate.sample_normal_O.normalized();
+  for (const Eigen::VectorXd& encoded_state : states) {
+    if (encoded_state.size() != XarmFullSamplingC3State::kSize ||
+        !encoded_state.allFinite()) {
+      return receipt;
+    }
+    const auto state = XarmFullSamplingC3State::Decode(encoded_state);
+    const Eigen::Matrix3d R_WO3 =
+        state.object_quaternion_WO.toRotationMatrix();
+    const double yaw = std::atan2(R_WO3(1, 0), R_WO3(0, 0));
+    const Eigen::Rotation2Dd R_WO(yaw);
+    const Eigen::Vector2d normal_W = R_WO * normal_O;
+    const Eigen::Vector2d boundary_W =
+        state.object_position_W.head<2>() +
+        R_WO * candidate.sample_point_O;
+    const double signed_gap = normal_W.dot(
+        state.pusher_position_W.head<2>() - boundary_W) - pusher_radius;
+    const double contact_height =
+        state.object_position_W.z() + candidate.sample_height_O;
+    const double contact_height_error =
+        std::abs(state.pusher_position_W.z() - contact_height);
+    receipt.maximum_absolute_signed_gap = std::max(
+        receipt.maximum_absolute_signed_gap, std::abs(signed_gap));
+    receipt.maximum_separating_gap =
+        std::max(receipt.maximum_separating_gap, signed_gap);
+    receipt.maximum_contact_height_error = std::max(
+        receipt.maximum_contact_height_error, contact_height_error);
+    ++receipt.checked_state_knots;
+  }
+  receipt.accepted =
+      receipt.checked_state_knots == static_cast<int>(states.size()) &&
+      receipt.maximum_separating_gap <=
+          contact_activation_tolerance &&
+      receipt.maximum_contact_height_error <=
+          contact_activation_tolerance;
   return receipt;
 }
 
@@ -1720,7 +2370,9 @@ XarmFullSamplingC3TaskSpacePlan BuildXarmFullSamplingC3TaskSpacePlan(
     return plan;
   }
   const auto& selected = buffer.successful.front();
-  const auto& states = selected.solve.dynamic_state_trajectory;
+  const auto& states = selected.solve.execution_state_trajectory.empty()
+      ? selected.solve.dynamic_state_trajectory
+      : selected.solve.execution_state_trajectory;
   if (states.size() < 2 ||
       selected.solve.planned_input_trajectory.size() + 1 != states.size()) {
     return plan;
@@ -1733,6 +2385,7 @@ XarmFullSamplingC3TaskSpacePlan BuildXarmFullSamplingC3TaskSpacePlan(
   plan.time_vector.resize(states.size());
   plan.pusher_positions_W.resize(3, states.size());
   plan.pusher_velocities_W.resize(3, states.size());
+  plan.pusher_forces_W.resize(3, states.size());
   for (int knot = 0; knot < static_cast<int>(states.size()); ++knot) {
     if (states[knot].size() != XarmFullSamplingC3State::kSize ||
         !states[knot].allFinite()) {
@@ -1743,10 +2396,19 @@ XarmFullSamplingC3TaskSpacePlan BuildXarmFullSamplingC3TaskSpacePlan(
         XarmFullSamplingC3State::kPusherPosition);
     plan.pusher_velocities_W.col(knot) = states[knot].segment<3>(
         XarmFullSamplingC3State::kPusherLinearVelocity);
+    const int input_knot = std::min(
+        knot, static_cast<int>(selected.solve.planned_input_trajectory.size()) - 1);
+    if (selected.solve.planned_input_trajectory[input_knot].size() != 3 ||
+        !selected.solve.planned_input_trajectory[input_knot].allFinite()) {
+      return XarmFullSamplingC3TaskSpacePlan{};
+    }
+    plan.pusher_forces_W.col(knot) =
+        selected.solve.planned_input_trajectory[input_knot];
   }
   plan.accepted = plan.time_vector.allFinite() &&
       plan.pusher_positions_W.allFinite() &&
       plan.pusher_velocities_W.allFinite() &&
+      plan.pusher_forces_W.allFinite() &&
       plan.pusher_positions_W.col(0).isApprox(
           selected.initial_pusher_position_W, 1.0e-12);
   return plan;
@@ -1793,7 +2455,9 @@ XarmFullSamplingC3OscExecutionPlan BuildXarmFullSamplingC3OscExecutionPlan(
       !standoff_waypoint_W.allFinite() ||
       !std::isfinite(reposition_speed) || reposition_speed <= 0.0 ||
       !std::isfinite(c3_dt) || c3_dt <= 0.0 ||
-      c3_plan.pusher_positions_W.cols() < 2) {
+      c3_plan.pusher_positions_W.cols() < 2 ||
+      c3_plan.pusher_forces_W.rows() != 3 ||
+      c3_plan.pusher_forces_W.cols() != c3_plan.pusher_positions_W.cols()) {
     return execution;
   }
   constexpr int kAcquisitionKnots = 5;
@@ -1801,11 +2465,13 @@ XarmFullSamplingC3OscExecutionPlan BuildXarmFullSamplingC3OscExecutionPlan(
   const int total_knots = kAcquisitionKnots + c3_tail_knots;
   execution.time_vector.resize(total_knots);
   execution.positions_W.resize(3, total_knots);
+  execution.forces_W = Eigen::MatrixXd::Zero(3, total_knots);
   execution.positions_W.col(0) = current_tip_W;
   execution.positions_W.col(1) = planar_waypoint_W;
   execution.positions_W.col(2) = elevated_waypoint_W;
   execution.positions_W.col(3) = standoff_waypoint_W;
   execution.positions_W.col(4) = c3_plan.pusher_positions_W.col(0);
+  execution.forces_W.col(4) = c3_plan.pusher_forces_W.col(0);
   execution.time_vector[0] = 0.0;
   for (int knot = 1; knot < kAcquisitionKnots; ++knot) {
     const double distance =
@@ -1818,13 +2484,15 @@ XarmFullSamplingC3OscExecutionPlan BuildXarmFullSamplingC3OscExecutionPlan(
     const int knot = kAcquisitionKnots + tail;
     execution.positions_W.col(knot) =
         c3_plan.pusher_positions_W.col(tail + 1);
+    execution.forces_W.col(knot) =
+        c3_plan.pusher_forces_W.col(tail + 1);
     execution.time_vector[knot] =
         execution.time_vector[kAcquisitionKnots - 1] + (tail + 1) * c3_dt;
   }
   execution.acquisition_knots = kAcquisitionKnots;
   execution.c3_knots = c3_plan.pusher_positions_W.cols();
   execution.accepted = execution.time_vector.allFinite() &&
-      execution.positions_W.allFinite();
+      execution.positions_W.allFinite() && execution.forces_W.allFinite();
   for (int knot = 1; knot < execution.time_vector.size(); ++knot) {
     execution.accepted = execution.accepted &&
         execution.time_vector[knot] > execution.time_vector[knot - 1];

@@ -87,6 +87,7 @@ struct OimControllerParams {
   double minimum_contact_normal_step{};
   double reposition_speed{}, reposition_waypoint_height{};
   int successor_minimum_contact_steps{}, successor_progress_window_steps{};
+  int physical_contact_dwell_steps{};
   double successor_minimum_yaw_progress{};
   double successor_minimum_translation_progress{};
   double successor_cost_hysteresis_fraction{};
@@ -122,6 +123,7 @@ struct OimControllerParams {
     a->Visit(DRAKE_NVP(successor_progress_window_steps));
     a->Visit(DRAKE_NVP(successor_minimum_yaw_progress));
     a->Visit(DRAKE_NVP(successor_minimum_translation_progress));
+    a->Visit(DRAKE_NVP(physical_contact_dwell_steps));
     a->Visit(DRAKE_NVP(successor_cost_hysteresis_fraction));
     a->Visit(DRAKE_NVP(osqp_settings_file));
     a->Visit(DRAKE_NVP(osc_qp_settings_file));

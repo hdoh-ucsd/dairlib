@@ -22,6 +22,7 @@
 #include <gflags/gflags.h>
 
 #include "examples/sampling_c3/oim_t/xarm6_process_common.h"
+#include "systems/controllers/osc/external_force_tracking_data.h"
 #include "systems/controllers/osc/operational_space_control.h"
 #include "systems/controllers/osc/joint_space_tracking_data.h"
 #include "systems/controllers/osc/rot_space_tracking_data.h"
@@ -61,6 +62,30 @@ const dairlib::lcmt_trajectory_block* FindTrajectory(
     }
   }
   return nullptr;
+}
+
+// A task/force message describes a bounded transition, not an indefinitely
+// extrapolated command. Drake trajectories extrapolate the closest segment
+// beyond their end time, so an unrefreshed nonzero-slope target ramps away
+// without bound (measured post-release runaway: tip driven to z = 1.14 m and
+// joint 3 into its limit while the planner waited for tip quiescence).
+// Append an explicit final hold knot so the terminal slope is zero, matching
+// the existing collision-aware posture-trajectory hold.
+drake::trajectories::PiecewisePolynomial<double>
+FirstOrderHoldWithTerminalHold(const Eigen::VectorXd& time_vector,
+                               const Eigen::MatrixXd& datapoints) {
+  const int points = static_cast<int>(time_vector.size());
+  Eigen::VectorXd held_times(points + 1);
+  held_times.head(points) = time_vector;
+  const double last_segment = time_vector[points - 1] -
+      time_vector[points - 2];
+  held_times[points] =
+      time_vector[points - 1] + std::max(last_segment, 1.0e-3);
+  Eigen::MatrixXd held_points(datapoints.rows(), points + 1);
+  held_points.leftCols(points) = datapoints;
+  held_points.rightCols(1) = datapoints.rightCols(1);
+  return drake::trajectories::PiecewisePolynomial<double>::FirstOrderHold(
+      held_times, held_points);
 }
 
 Eigen::Vector3d FirstPositionTarget(
@@ -372,8 +397,7 @@ class SafeTaskTrajectorySource final
         datapoints.row(row) = Eigen::VectorXd::Map(
             target->datapoints[row].data(), target->num_points);
       }
-      *result = drake::trajectories::PiecewisePolynomial<double>::FirstOrderHold(
-          time_vector, datapoints);
+      *result = FirstOrderHoldWithTerminalHold(time_vector, datapoints);
       if (message->utime != last_target_utime_) {
         last_target_utime_ = message->utime;
         std::cout << "osc_target_received utime=" << message->utime
@@ -397,6 +421,66 @@ class SafeTaskTrajectorySource final
   drake::systems::InputPortIndex state_port_, message_port_;
   drake::systems::OutputPortIndex output_port_;
   mutable int64_t last_target_utime_{-1};
+};
+
+class SafeForceTrajectorySource final
+    : public drake::systems::LeafSystem<double> {
+ public:
+  SafeForceTrajectorySource() {
+    message_port_ = this->DeclareAbstractInputPort(
+        "task_space_trajectory",
+        drake::Value<dairlib::lcmt_timestamped_saved_traj>{}).get_index();
+    drake::trajectories::PiecewisePolynomial<double> initial(
+        Eigen::Vector3d::Zero());
+    drake::trajectories::Trajectory<double>& model = initial;
+    output_port_ = this->DeclareAbstractOutputPort(
+        "safe_end_effector_force_target", model,
+        &SafeForceTrajectorySource::CalcTrajectory).get_index();
+  }
+
+  const drake::systems::OutputPort<double>& trajectory_output() const {
+    return this->get_output_port(output_port_);
+  }
+
+ private:
+  void CalcTrajectory(
+      const drake::systems::Context<double>& context,
+      drake::trajectories::Trajectory<double>* output) const {
+    auto* result = dynamic_cast<
+        drake::trajectories::PiecewisePolynomial<double>*>(output);
+    const auto* message =
+        this->EvalInputValue<dairlib::lcmt_timestamped_saved_traj>(
+            context, message_port_);
+    const auto* target =
+        FindTrajectory(message, "end_effector_force_target");
+    if (target == nullptr) {
+      *result = drake::trajectories::PiecewisePolynomial<double>(
+          Eigen::Vector3d::Zero());
+      return;
+    }
+    if (target->num_datatypes != 3 || target->num_points < 2 ||
+        target->time_vec.size() !=
+            static_cast<size_t>(target->num_points) ||
+        target->datapoints.size() != 3) {
+      throw std::runtime_error(
+          "OSC force target must contain at least two 3D samples");
+    }
+    Eigen::VectorXd time_vector = Eigen::VectorXd::Map(
+        target->time_vec.data(), target->num_points);
+    Eigen::MatrixXd datapoints(3, target->num_points);
+    for (int row = 0; row < 3; ++row) {
+      if (target->datapoints[row].size() !=
+          static_cast<size_t>(target->num_points)) {
+        throw std::runtime_error("malformed OSC force target datapoints");
+      }
+      datapoints.row(row) = Eigen::VectorXd::Map(
+          target->datapoints[row].data(), target->num_points);
+    }
+    *result = FirstOrderHoldWithTerminalHold(time_vector, datapoints);
+  }
+
+  drake::systems::InputPortIndex message_port_;
+  drake::systems::OutputPortIndex output_port_;
 };
 
 class CollisionAwarePostureTrajectorySource final
@@ -480,7 +564,8 @@ class CollisionAwarePostureTrajectorySource final
       last_target_utime_ = message->utime;
       const Eigen::VectorXd measured = ReadMeasuredPosture();
       std::cout << "collision_aware_posture_received utime="
-                << message->utime << " q_target="
+                << message->utime << " publisher=\""
+                << message->saved_traj.metadata.description << "\" q_target="
                 << datapoints.rightCols(1).transpose()
                 << " q_measured=" << measured.transpose()
                 << " posture_error_inf="
@@ -566,8 +651,14 @@ class OscPhaseMux final : public drake::systems::LeafSystem<double> {
           *posture_target, joints, 0);
       const Eigen::VectorXd target_q = ReadTrajectoryColumn(
           *posture_target, joints, posture_target->num_points - 1);
+      const double command_duration =
+          posture_target->time_vec.back() - posture_target->time_vec.front();
+      if (!std::isfinite(command_duration) || command_duration <= 0.0) {
+        throw std::runtime_error(
+            "collision-aware posture command duration must be positive");
+      }
       Eigen::VectorXd desired_v =
-          (target_q - start_q) / params_.task.planning_time_step;
+          (target_q - start_q) / command_duration;
       for (int i = 0; i < joints; ++i) {
         desired_v[i] = std::clamp(
             desired_v[i], -params_.robot.velocity_limits[i],
@@ -784,6 +875,7 @@ int DoMain(int argc, char* argv[]) {
           params.lcm.tracking_trajectory_channel, &lcm));
   auto* trajectory_source =
       builder.AddSystem<SafeTaskTrajectorySource>(plant, params);
+  auto* force_source = builder.AddSystem<SafeForceTrajectorySource>();
   auto* descent_posture_source =
       builder.AddSystem<DescentPostureTrajectorySource>(plant, params);
   auto* reposition_posture_source =
@@ -808,6 +900,12 @@ int DoMain(int argc, char* argv[]) {
       Eigen::Matrix3d::Identity(), plant, plant);
   tracking->AddPointToTrack(params.robot.end_effector_body,
                             params.robot.end_effector_point);
+  const Eigen::Vector3d task_acceleration_limits =
+      params.controller.task_space_kp.cwiseProduct(
+          Eigen::Vector3d::Constant(
+              params.controller.approach_command_step_limit));
+  tracking->SetCmdAccelerationBounds(
+      -task_acceleration_limits, task_acceleration_limits);
   osc->AddTrackingData(std::move(tracking));
   const auto wrist_roll_it = std::find(
       params.robot.controlled_joints.begin(),
@@ -840,6 +938,8 @@ int DoMain(int argc, char* argv[]) {
       Eigen::Matrix3d::Identity(), plant, plant);
   translation_only_tracking->AddPointToTrack(
       params.robot.end_effector_body, params.robot.end_effector_point);
+  translation_only_tracking->SetCmdAccelerationBounds(
+      -task_acceleration_limits, task_acceleration_limits);
   translation_only_osc->AddTrackingData(std::move(translation_only_tracking));
   const int num_controlled_joints = params.robot.controlled_joints.size();
   auto descent_posture_tracking = std::make_unique<
@@ -872,8 +972,9 @@ int DoMain(int argc, char* argv[]) {
       params.controller.reposition_posture_kd *
           Eigen::MatrixXd::Identity(num_controlled_joints,
                                     num_controlled_joints),
-      Eigen::MatrixXd::Identity(num_controlled_joints,
-                                num_controlled_joints),
+      params.controller.descent_posture_weight *
+          Eigen::MatrixXd::Identity(num_controlled_joints,
+                                    num_controlled_joints),
       plant, plant);
   reposition_posture_tracking->AddJointsToTrack(
       params.robot.controlled_joints, controlled_velocities);
@@ -891,8 +992,19 @@ int DoMain(int argc, char* argv[]) {
       Eigen::Matrix3d::Identity(), plant, plant);
   reposition_translation_tracking->AddPointToTrack(
       params.robot.end_effector_body, params.robot.end_effector_point);
+  reposition_translation_tracking->SetCmdAccelerationBounds(
+      -task_acceleration_limits, task_acceleration_limits);
   reposition_posture_osc->AddTrackingData(
       std::move(reposition_translation_tracking));
+  auto make_force_tracking = [&]() {
+    return std::make_unique<
+        systems::controllers::ExternalForceTrackingData>(
+        "end_effector_force", Eigen::Matrix3d::Identity(), plant, plant,
+        params.robot.end_effector_body, params.robot.end_effector_point);
+  };
+  osc->AddForceTrackingData(make_force_tracking());
+  translation_only_osc->AddForceTrackingData(make_force_tracking());
+  reposition_posture_osc->AddForceTrackingData(make_force_tracking());
   // The xArm differential-IK reference weights tilt by 0.35 relative to
   // translation; OSC uses a quadratic weight, hence 0.35^2 = 0.1225.
   Eigen::Matrix3d orientation_weight =
@@ -950,6 +1062,8 @@ int DoMain(int argc, char* argv[]) {
   builder.Connect(*state_sub, *state_receiver);
   builder.Connect(trajectory_sub->get_output_port(),
                   trajectory_source->get_input_port(1));
+  builder.Connect(trajectory_sub->get_output_port(),
+                  force_source->get_input_port(0));
   builder.Connect(state_receiver->get_output_port(),
                   trajectory_source->get_input_port(0));
   builder.Connect(state_receiver->get_output_port(),
@@ -978,6 +1092,15 @@ int DoMain(int argc, char* argv[]) {
   builder.Connect(trajectory_source->trajectory_output(),
                   reposition_posture_osc->get_input_port_tracking_data(
                       "collision_aware_reposition_position_target"));
+  builder.Connect(force_source->trajectory_output(),
+                  osc->get_input_port_tracking_data(
+                      "end_effector_force"));
+  builder.Connect(force_source->trajectory_output(),
+                  translation_only_osc->get_input_port_tracking_data(
+                      "end_effector_force"));
+  builder.Connect(force_source->trajectory_output(),
+                  reposition_posture_osc->get_input_port_tracking_data(
+                      "end_effector_force"));
   if (orientation_source != nullptr) {
     builder.Connect(state_receiver->get_output_port(),
                     orientation_source->get_input_port(0));

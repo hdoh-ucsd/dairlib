@@ -91,6 +91,17 @@ controller:
   reposition_speed: 0.18
   reposition_waypoint_height: 0.07738005
   successor_minimum_contact_steps: 1000
+  # Physically-joined dwell completeness bar (user-authorized option b,
+  # 2026-09-02): 90% of the minimum measured productive initial-push joined
+  # count across the instrumented exact-8000 receipts — 629 (67d67b, the
+  # run whose episode ended 9 steps under the prior 638 bar and zeroed a
+  # real 15 mm push), 709 (b12e63), 726 (983a16), 818 (6cbd6f), 897
+  # (77a76a) -> floor(0.9 * 629) = 566. Counted in physically joined
+  # transactions (fresh + episode-active + on-face + inward polarity), not
+  # geometric-latch periods. Note: a 0.9-of-minimum rule ratchets downward
+  # with each new below-minimum draw; revisit the estimator if the
+  # distribution keeps widening.
+  physical_contact_dwell_steps: 566
   successor_progress_window_steps: 2000
   successor_minimum_yaw_progress: 0.002
   successor_minimum_translation_progress: 0.002

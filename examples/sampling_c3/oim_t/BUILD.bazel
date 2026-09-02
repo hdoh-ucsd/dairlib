@@ -75,6 +75,7 @@ cc_test(
         "//systems:robot_lcm_systems",
         "//systems/framework:lcm_driven_loop",
         "//systems/controllers/osc:operational_space_control",
+        "//systems/controllers/osc:external_force_tracking_data",
         "//systems/controllers/osc:joint_space_tracking_data",
         "//systems/controllers/osc:rot_space_tracking_data",
         "//systems/controllers/osc:trans_space_tracking_data",

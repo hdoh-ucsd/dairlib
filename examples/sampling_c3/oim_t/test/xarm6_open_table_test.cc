@@ -23,6 +23,12 @@ TEST(Xarm6OpenTableTest, CanonicalConfigurationIsSixDimensional) {
   EXPECT_EQ(params.robot.passive_stiffness.size(), 6);
   EXPECT_DOUBLE_EQ(params.robot.effort_limits[5], 20.0);
   EXPECT_DOUBLE_EQ(params.robot.velocity_limits[5], 0.5);
+  // User-authorized Gate-381 option b: physically-joined dwell completeness,
+  // recalibrated as floor(0.9 * min measured productive joined count); the
+  // minimum is 629 (run 67d67b) across the instrumented exact-8000 receipts.
+  EXPECT_EQ(params.controller.physical_contact_dwell_steps, 566);
+  EXPECT_LE(params.controller.physical_contact_dwell_steps,
+            params.controller.successor_minimum_contact_steps);
 }
 
 TEST(Xarm6OpenTableTest, PlantActuationAndWristAxisAreConsistent) {

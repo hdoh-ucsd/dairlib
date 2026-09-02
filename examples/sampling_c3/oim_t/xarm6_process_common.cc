@@ -107,6 +107,9 @@ OimTParams LoadAndValidateConfig(const std::string& path) {
       params.controller.reposition_waypoint_height <=
           params.object.resting_height ||
       params.controller.successor_minimum_contact_steps <= 0 ||
+      params.controller.physical_contact_dwell_steps <= 0 ||
+      params.controller.physical_contact_dwell_steps >
+          params.controller.successor_minimum_contact_steps ||
       params.controller.successor_progress_window_steps <
           params.controller.successor_minimum_contact_steps ||
       params.controller.successor_minimum_yaw_progress <= 0.0 ||

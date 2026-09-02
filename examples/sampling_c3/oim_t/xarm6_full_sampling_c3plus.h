@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+#include <limits>
 #include <string>
 #include <utility>
 #include <vector>
@@ -66,11 +68,138 @@ bool IsXarmFullSamplingC3ObjectUpright(
 double FullSamplingC3LateralReserveLimit(
     double lateral_drift_tolerance, double contact_activation_tolerance);
 
+// Stop a primary contact before it consumes the lateral band reserved for a
+// physical correction. Equality remains admissible; nonfinite and negative
+// inputs fail loudly.
+bool IsFullSamplingC3LateralReserveExhausted(
+    double measured_object_x, double goal_x, double lateral_reserve_limit);
+
+// Initial execution admission is the conjunction of predicted lateral
+// safety and the existing whole-capsule/live-IK acquisition receipt.  A
+// reachable candidate outside the unchanged lateral corridor is diagnostic
+// evidence, not an executable plan.
+bool IsFullSamplingC3InitialCandidateAdmitted(
+    bool lateral_gate, bool swept_capsule_clear, bool ik_reached);
+
+// A contact acquisition completes only after the measured capsule reaches the
+// sampled face.  The activation tolerance controls tracking/continuation; it
+// is not a substitute for physical engagement.
+bool IsFullSamplingC3ContactEngagementComplete(double signed_contact_gap);
+
+struct XarmFullSamplingC3ContactDwellReceipt;
+
+// After a zero-gap engagement receipt, reconstructed geometry may oscillate
+// by micrometers around the unilateral boundary while Drake contact remains
+// active. The existing activation band supplies hysteresis; it is not allowed
+// to create engagement from a previously separated state.
+bool IsFullSamplingC3LatchedContactContinuation(
+    bool engagement_latched,
+    const XarmFullSamplingC3ContactDwellReceipt& receipt);
+
+// A bounded-corridor handoff may begin outside the primary reserve so that a
+// corrective face can restore it.  During that contact, reject only an outer
+// corridor exit or measured worsening beyond the unchanged activation band.
+bool IsFullSamplingC3ContactLateralRejected(
+    double measured_object_x, double goal_x,
+    double cycle_entry_lateral_error, double lateral_reserve_limit,
+    double lateral_drift_tolerance, double contact_activation_tolerance,
+    bool bounded_recovery_mode);
+
+// A velocity-limited posture step must make the live FK error to its command
+// nonincreasing before it is sent to the controller.
+bool IsFullSamplingC3PostureStepProgressive(
+    double current_tip_error, double target_tip_error,
+    double allowed_regression);
+
+// Bounds an IK joint step by the per-joint velocity window while preserving
+// its direction: the whole step is scaled so the most-saturated joint runs at
+// its limit. Clamping each joint independently distorts the solved joint
+// ratio (a truncated wrist correction under a nearly whole elbow step), which
+// tilts the capsule off the vertical band and can move the executed tip away
+// from its command.
+Eigen::VectorXd LimitXarmFullSamplingC3JointStepPreservingDirection(
+    const Eigen::VectorXd& joint_step,
+    const Eigen::VectorXd& velocity_limits, double planning_time_step);
+
+struct XarmFullSamplingC3PhysicalDwellJoinReceipt {
+  bool receipt_present{};
+  bool receipt_fresh{};
+  bool contact_active{};
+  bool face_identity{};
+  bool normal_polarity{};
+  bool accepted{};
+  double face_distance{std::numeric_limits<double>::infinity()};
+  double inward_normal_force{};
+};
+
+// Joins the simulator's live physical-contact receipt to the controller's
+// selected-face transaction before any dwell credit. Face identity and
+// polarity use the gates-375-379 join: the measured planar contact point must
+// lie within two pusher radii plus the activation tolerance of the selected
+// boundary point, and the measured force on the object must push inward
+// against the selected outward normal. Missing, stale, wrong-face,
+// wrong-polarity, or physically absent contact is not accepted; the
+// geometric latch remains a separate continuity diagnostic.
+XarmFullSamplingC3PhysicalDwellJoinReceipt
+EvaluateXarmFullSamplingC3PhysicalDwellJoin(
+    bool receipt_present, int64_t receipt_utime, int64_t now_utime,
+    int64_t staleness_limit_us, bool raw_contact_active,
+    const Eigen::Vector2d& contact_point_xy_W,
+    const Eigen::Vector2d& force_on_object_xy_W,
+    const Eigen::Vector2d& selected_boundary_W,
+    const Eigen::Vector2d& selected_outward_normal_W,
+    double pusher_radius, double contact_activation_tolerance);
+
+// Retains the previously executable sample unless a newly ranked sample
+// improves its dynamic cost by more than the same relative hysteresis used by
+// the reference Sampling-C3 controller. An explicitly invalidated target is
+// never retained.
+bool ShouldPreserveXarmFullSamplingC3RepositionTarget(
+    bool previous_available, bool previous_invalidated,
+    double previous_cost, double best_cost, double hysteresis_fraction);
+
+// Converts a Cartesian segment into a time-parameterized command while
+// retaining the configured planning period as the minimum segment duration.
+double XarmFullSamplingC3CommandDuration(
+    double distance, double speed, double planning_dt);
+
+// Once a corrective contact has physically engaged and cleared, that face
+// owns the next release.  A productive primary plan must not overwrite the
+// measured recovery reference with its older sampled face.
+bool ShouldReplaceXarmFullSamplingC3ReleaseReferenceWithPrimary(
+    bool progress_lateral_rejected,
+    bool recovery_release_reference_active);
+
 // The spatial sampler covers the complete vertical side mesh.  Progress and
 // recovery execution use the central band so the pusher cannot realize a
 // nominal planar sample as an upper/lower-edge contact.
 bool IsFullSamplingC3CentralSideContact(
     double sample_height_O, double object_half_height, double pusher_radius);
+
+enum class XarmPhysicalContactClass {
+  kTipSideCandidate,
+  kSideShaft,
+  kTopGraze,
+  kBottomGraze,
+};
+
+struct XarmPhysicalContactClassification {
+  XarmPhysicalContactClass contact_class{};
+  double relative_height_m{};
+  double point_to_tip_m{};
+};
+
+// Classify a measured Drake point-pair contact geometrically.  This receipt is
+// diagnostic: kTipSideCandidate means that the point lies in the existing
+// central-side band and near the configured tip.  It does not replace the
+// controller's selected-face admission or contact-continuation gates.
+XarmPhysicalContactClassification ClassifyXarmPhysicalContact(
+    const Eigen::Vector3d& contact_point_W,
+    const Eigen::Vector3d& pusher_tip_W,
+    const Eigen::Vector3d& object_center_W,
+    double pusher_radius, double contact_activation_tolerance);
+
+const char* XarmPhysicalContactClassName(XarmPhysicalContactClass value);
 
 // A new contact cycle is not admitted unless the remaining measured-update
 // budget can still contain its unchanged minimum contact dwell. Repositioning
@@ -91,7 +220,10 @@ struct XarmFullSamplingC3CycleBudgetReceipt {
 // Admit a selected physical cycle only when its live-IK acquisition estimate,
 // unchanged contact dwell, and worst observed release/recovery receipt all fit
 // in the remaining measured-update budget. The IK estimate is converted from
-// planning-time steps to execution-update units; the release/recovery term is
+// planning-time steps to execution-update units and floored by the worst
+// measured acquisition receipt when one exists (the estimate omits settle
+// waits and corrective sub-steps, and a cycle admitted on the bare estimate
+// has exhausted the budget mid-recovery); the release/recovery term is
 // measured rather than supplied by a new tuned margin. Equality is
 // intentionally insufficient so the terminal hold retains one update.
 XarmFullSamplingC3CycleBudgetReceipt
@@ -99,7 +231,23 @@ EvaluateFullSamplingC3CycleBudget(
     int updates_used, int update_budget, int acquisition_ik_steps,
     double acquisition_ik_step_seconds, int execution_update_period_ms,
     int minimum_contact_steps,
-    const std::vector<int>& measured_release_recovery_updates);
+    const std::vector<int>& measured_release_recovery_updates,
+    int minimum_acquisition_updates = 0);
+
+// Once authoritative physical contact-phase receipts exist, reserve their
+// worst measured duration rather than silently assuming every future response
+// consumes the configured dwell cap. Before the first receipt, the configured
+// value remains authoritative. Release/recovery retains its independent
+// worst-case measured reservation, and measured acquisition receipts floor
+// the live-IK acquisition estimate the same way.
+XarmFullSamplingC3CycleBudgetReceipt
+EvaluateFullSamplingC3MeasuredContactPhaseCycleBudget(
+    int updates_used, int update_budget, int acquisition_ik_steps,
+    double acquisition_ik_step_seconds, int execution_update_period_ms,
+    int configured_contact_dwell_steps,
+    const std::vector<int>& measured_contact_phase_updates,
+    const std::vector<int>& measured_release_recovery_updates,
+    const std::vector<int>& measured_acquisition_updates = {});
 
 struct XarmFullSamplingC3AcquisitionConformanceReceipt {
   bool preview_accepted{};
@@ -144,6 +292,26 @@ EvaluateFullSamplingC3WaypointConformancePersistence(
     bool spatially_conformant, int prior_consecutive_violation_updates,
     int required_consecutive_violation_updates);
 
+struct XarmFullSamplingC3PlanningHandoffReceipt {
+  double object_translation_drift{};
+  double object_orientation_drift{};
+  bool object_translation_conformant{};
+  bool object_orientation_conformant{};
+  bool acquisition_conformant{};
+  bool accepted{};
+};
+
+// Sampling and live IK are computationally expensive while Drake continues
+// publishing measured state. Revalidate both the object linearization point
+// and the selected acquisition from one fresh execution-boundary snapshot.
+XarmFullSamplingC3PlanningHandoffReceipt
+EvaluateFullSamplingC3PlanningHandoff(
+    const Eigen::Vector3d& planning_object_pose,
+    const Eigen::Vector3d& measured_object_pose,
+    bool swept_capsule_clear, bool ik_reached,
+    double maximum_translation_drift,
+    double maximum_orientation_drift);
+
 // A released physical response that did not restore the lateral reserve must
 // invalidate the candidate and retry, regardless of whether the observed
 // failure was crossing, wrong polarity, or contact loss.
@@ -158,12 +326,25 @@ bool ShouldReplanXarmFullSamplingC3ReleasedExecutionFailure(
     bool execution_failed, bool release_cleared);
 
 // A released pose that passes the global lateral corridor and bounded task
-// transaction may seed another solve even when it misses the stricter reserve
-// required for productive-cycle credit.
+// transaction may seed another solve even when it misses strict Pareto credit
+// or the tighter reserve. The strict receipt remains reported but is not the
+// authority for a zero-credit continuation.
 bool ShouldContinueXarmFullSamplingC3BoundedCorridorState(
     bool productive_cycle_credited, bool post_recovery_task_accepted,
     bool lateral_corridor_accepted, bool component_transaction_accepted,
     bool release_verified);
+
+// A released contact with no threshold-scale response must not consume an
+// already certified bounded-corridor handoff. This is a zero-credit retry:
+// both task components must remain nonregressive, both measured increments
+// must remain below the unchanged successor thresholds, and the object must
+// remain upright and inside the unchanged outer lateral corridor.
+bool ShouldContinueXarmFullSamplingC3BoundedNoResponse(
+    bool prior_bounded_handoff, bool release_verified, bool object_upright,
+    bool translation_nonregressive, bool orientation_nonregressive,
+    double translation_progress, double orientation_progress,
+    double minimum_translation_progress, double minimum_orientation_progress,
+    double lateral_error, double lateral_drift_tolerance);
 
 // Revolute IK may return q +/- 2*pi at identical Cartesian posture. For joints
 // whose declared range contains a complete revolution, select the equivalent
@@ -192,6 +373,86 @@ bool IsFullSamplingC3WrongPolarityResponse(
     double start_signed_error, double measured_signed_error,
     int response_steps, int minimum_contact_steps);
 
+struct XarmFullSamplingC3ContactDwellReceipt {
+  double tip_hold_error{};
+  double signed_contact_gap{};
+  bool tip_hold_conformant{};
+  bool contact_gap_accepted{};
+  bool contact_continuation{};
+};
+
+// A fixed contact dwell remains authoritative only while the measured tip is
+// still at its commanded contact and the object-attached face has not
+// separated. Both comparisons reuse the existing contact-activation
+// tolerance; this receipt introduces no numerical parameter.
+XarmFullSamplingC3ContactDwellReceipt
+EvaluateFullSamplingC3ContactDwellContinuation(
+    const Eigen::Vector3d& active_contact_target_W,
+    const Eigen::Vector3d& measured_tip_W,
+    const Eigen::Vector3d& measured_object_pose,
+    const Eigen::Vector2d& contact_point_O,
+    const Eigen::Vector2d& contact_normal_O,
+    double pusher_radius, double contact_activation_tolerance);
+
+struct XarmFullSamplingC3MeasuredResponseCompletionReceipt {
+  bool contact_continuation{};
+  bool object_upright{};
+  bool lateral_accepted{};
+  bool terminal_descent_accepted{};
+  bool incremental_motion_bounded{};
+  bool persistence_accepted{};
+  bool completed{};
+  int consecutive_bounded_updates{};
+  double incremental_translation{};
+  double incremental_orientation{};
+  double lateral_error{};
+};
+
+// A measured contact response may complete before the configured dwell cap
+// only after it has produced strict terminal descent, retained the lateral
+// reserve and upright/contact guards, and remained incrementally bounded for
+// one caller-supplied persistence interval. The incremental bounds reuse the
+// unchanged successor progress minima; no response-speed tolerance is added.
+XarmFullSamplingC3MeasuredResponseCompletionReceipt
+EvaluateFullSamplingC3MeasuredResponseCompletion(
+    const Eigen::Vector3d& response_start_object_pose,
+    const Eigen::Vector3d& previous_object_pose,
+    const Eigen::Vector3d& measured_object_pose,
+    const Eigen::Vector3d& goal_pose,
+    bool contact_continuation, bool object_upright,
+    int prior_consecutive_bounded_updates,
+    int required_persistence_updates,
+    double minimum_translation_progress,
+    double minimum_yaw_progress,
+    double lateral_reserve_limit);
+
+// Budget evidence is recorded only when a nonempty physical contact phase
+// reaches an authoritative measured exit. Exhausting process time or merely
+// falling out of the loop is not a completion receipt.
+bool ShouldRecordFullSamplingC3MeasuredContactPhase(
+    int contact_updates, bool contact_engaged, bool response_completed,
+    bool lateral_rejected, bool terminal_regression, bool upright_rejected,
+    bool contact_lost);
+
+struct XarmFullSamplingC3LocalRepositionReceipt {
+  bool local_capsule_clear{};
+  bool local_ik_reached{};
+  bool anchored_capsule_clear{};
+  bool anchored_ik_reached{};
+  bool local_accepted{};
+  bool anchored_accepted{};
+  bool accepted{};
+  bool use_neutral_anchor{};
+};
+
+// Prefer a collision- and IK-certified local acquisition. The global
+// home-derived neutral anchor remains a fail-closed fallback and is never
+// selected merely because it was evaluated first.
+XarmFullSamplingC3LocalRepositionReceipt
+EvaluateFullSamplingC3LocalReposition(
+    bool local_capsule_clear, bool local_ik_reached,
+    bool anchored_capsule_clear, bool anchored_ik_reached);
+
 struct XarmFullSamplingC3TerminalDescentReceipt {
   bool translation_nonregressive{};
   bool orientation_nonregressive{};
@@ -211,6 +472,48 @@ EvaluateFullSamplingC3TerminalDescent(
     const Eigen::Vector3d& goal_object_pose,
     double minimum_translation_progress,
     double minimum_orientation_progress);
+
+struct XarmFullSamplingC3MeasuredPolarityReceipt {
+  XarmFullSamplingC3TerminalDescentReceipt terminal;
+  double measured_translation{};
+  double measured_orientation{};
+  bool response_observed{};
+  bool wrong_polarity{};
+};
+
+// Recovery may stop at the lateral reserve only after a measured response has
+// been observed and neither global terminal component has moved away from its
+// goal. Existing successor minima define response observability.
+XarmFullSamplingC3MeasuredPolarityReceipt
+EvaluateFullSamplingC3MeasuredRecoveryPolarity(
+    const Eigen::Vector3d& recovery_start_object_pose,
+    const Eigen::Vector3d& measured_object_pose,
+    const Eigen::Vector3d& goal_object_pose,
+    double minimum_translation_motion,
+    double minimum_orientation_motion);
+
+struct XarmFullSamplingC3RecoveryAdmissionReceipt {
+  XarmFullSamplingC3TerminalDescentReceipt terminal;
+  bool translation_debt_bounded{};
+  bool orientation_debt_bounded{};
+  bool accepted{};
+};
+
+// The contact model may predict a terminal-task debt while restoring x.
+// User-authorized reconciliation (option a, 2026-09-02): recovery candidates
+// receive the same trade allowance component-decomposed progress
+// transactions already receive — at most one unchanged terminal tolerance of
+// predicted debt per component — with the lateral-recovery receipt gating
+// the active purpose. The measured response remains subject to strict
+// zero-debt polarity rejection, so an admitted prediction that regresses in
+// reality is still released and replanned.
+XarmFullSamplingC3RecoveryAdmissionReceipt
+EvaluateFullSamplingC3RecoveryCandidateAdmission(
+    const Eigen::Vector3d& recovery_start_object_pose,
+    const Eigen::Vector3d& predicted_object_pose,
+    const Eigen::Vector3d& goal_object_pose,
+    double maximum_translation_debt,
+    double maximum_orientation_debt);
 
 struct XarmFullSamplingC3NormalizedParetoDescentReceipt {
   XarmFullSamplingC3TerminalDescentReceipt terminal;
@@ -413,6 +716,11 @@ struct XarmFullSamplingC3SolveReceipt {
   Eigen::Vector3d dynamic_terminal_object_position{
       Eigen::Vector3d::Zero()};
   std::vector<Eigen::VectorXd> dynamic_state_trajectory;
+  // DAIRLab kSimLCSReplaceC3EEPlan equivalent: dynamically re-simulated
+  // object states with the C3 plan's pusher position/velocity restored for
+  // physical execution. Keep this distinct from the residual-certified
+  // dynamic rollout above.
+  std::vector<Eigen::VectorXd> execution_state_trajectory;
   std::vector<Eigen::VectorXd> planned_input_trajectory;
 };
 
@@ -476,6 +784,26 @@ BuildXarmFullSamplingC3CorridorSafePrefix(
     const XarmFullSamplingC3CandidateReceipt& candidate,
     double goal_object_x, double lateral_drift_tolerance);
 
+struct XarmFullSamplingC3PredictedContactPrefixReceipt {
+  bool accepted{};
+  int checked_state_knots{};
+  double maximum_absolute_signed_gap{};
+  double maximum_separating_gap{};
+  double maximum_contact_height_error{};
+};
+
+// Verifies that a retained execution prefix remains on its sampled
+// object-attached face. This catches spatial rollouts whose object motion is
+// corridor-safe but whose pusher lifts away from, or crosses through, the
+// intended contact. An inward target is allowed because the physical object
+// supplies the unilateral constraint; only positive separation is rejected.
+// The existing contact-activation tolerance is used for the separating gap
+// and contact-height error.
+XarmFullSamplingC3PredictedContactPrefixReceipt
+EvaluateXarmFullSamplingC3PredictedContactPrefix(
+    const XarmFullSamplingC3CandidateReceipt& candidate,
+    double pusher_radius, double contact_activation_tolerance);
+
 struct XarmFullSamplingC3BatchReceipt {
   bool accepted{};
   int num_samples{};
@@ -534,6 +862,7 @@ struct XarmFullSamplingC3TaskSpacePlan {
   Eigen::VectorXd time_vector;
   Eigen::MatrixXd pusher_positions_W;
   Eigen::MatrixXd pusher_velocities_W;
+  Eigen::MatrixXd pusher_forces_W;
   Eigen::Vector2d sample_point_O{Eigen::Vector2d::Zero()};
   Eigen::Vector2d sample_normal_O{Eigen::Vector2d::Zero()};
   double sample_height_O{};
@@ -554,6 +883,7 @@ struct XarmFullSamplingC3OscExecutionPlan {
   bool accepted{};
   Eigen::VectorXd time_vector;
   Eigen::MatrixXd positions_W;
+  Eigen::MatrixXd forces_W;
   int acquisition_knots{};
   int c3_knots{};
 };

@@ -47,6 +47,12 @@ DEFINE_int32(full_execution_steps, 2000,
              "Maximum measured-state waypoint waits in full mode");
 DEFINE_int32(full_execution_period_ms, 20,
              "Measured-state refresh period for full-mode waypoint gates");
+DEFINE_bool(exact_execution_budget, false,
+            "Diagnostic mode that executes through the exact full-mode "
+            "update ceiling even when the remaining budget cannot contain "
+            "a complete measured contact/recovery transaction; if live "
+            "planning terminates earlier, the measured terminal hold consumes "
+            "the remaining updates without claiming task progress");
 DEFINE_bool(first_solve_only, false,
             "Run one exact-T linearized Sampling-C3+ solve and exit");
 DEFINE_bool(live_sampled_plan, false,
@@ -106,6 +112,16 @@ constexpr double kStemHalfY = 0.0397;
 constexpr double kTHalfHeight = 0.0298;
 constexpr int kSweptPostureSamples = 8;
 constexpr double kMaximumVerticalAxisError = 0.05;
+// Sustained physical absence during a geometric contact latch is a real
+// contact end. Three 20 ms transactions mirror the simulator's 0.05 s
+// episode-end debounce; polarity is excluded from loss (a near-zero-force
+// hold flickers polarity without departing) and gates credit only.
+constexpr int kPhysicalDwellLossDebounceSteps = 3;
+// Source OIM stick-tilt objective w_tilt * (1 - cos(psi)), w_tilt = 80.0
+// (oim/configs/robots/xarm6.yaml and xarm6_real.yaml, never faded). The band
+// constraint above only bounds feasibility; without this cost the nearest-q
+// IK legally hugs the band edge and the descent contacts the face tilted.
+constexpr double kVerticalAxisTiltCostWeight = 80.0;
 
 double CapsuleOrientationClearanceHeight(const OimTParams& params) {
   const double tip_local_z = params.robot.end_effector_point.z();
@@ -371,13 +387,19 @@ ContactPostureResult SolveVerticalContactPostureStep(
       end_effector.body_frame(), params.robot.end_effector_point,
       plant.world_frame(), desired_tip_W - position_tolerance,
       desired_tip_W + position_tolerance);
-  // The source OIM controller's large tilt cost keeps the pushing stick
-  // vertical.  Constrain only its axis; wrist roll remains unavailable and
-  // irrelevant for the axisymmetric capsule.
+  // The source OIM controller keeps the pushing stick vertical with a large
+  // tilt cost; the band constraint alone leaves the nearest-q solution free
+  // to hug the band edge. Keep the feasibility band and restore the source
+  // objective so descent steps actively re-verticalize. Wrist roll remains
+  // unavailable and irrelevant for the axisymmetric capsule.
   ik.AddAngleBetweenVectorsConstraint(
       end_effector.body_frame(), Eigen::Vector3d::UnitZ(),
       plant.world_frame(), -Eigen::Vector3d::UnitZ(), 0.0,
       kMaximumVerticalAxisError);
+  ik.AddAngleBetweenVectorsCost(
+      end_effector.body_frame(), Eigen::Vector3d::UnitZ(),
+      plant.world_frame(), -Eigen::Vector3d::UnitZ(),
+      kVerticalAxisTiltCostWeight);
   ik.get_mutable_prog()->AddQuadraticErrorCost(
       Eigen::MatrixXd::Identity(measured_q.size(), measured_q.size()),
       measured_q, ik.q());
@@ -404,12 +426,10 @@ ContactPostureResult SolveVerticalContactPostureStep(
               << " canonical_q=" << canonical_solution.transpose()
               << " measured_q=" << measured_q.transpose() << std::endl;
   }
-  Eigen::VectorXd joint_step = canonical_solution - measured_q;
-  for (int i = 0; i < joint_step.size(); ++i) {
-    const double step_limit =
-        params.robot.velocity_limits[i] * params.task.planning_time_step;
-    joint_step[i] = std::clamp(joint_step[i], -step_limit, step_limit);
-  }
+  const Eigen::VectorXd joint_step =
+      LimitXarmFullSamplingC3JointStepPreservingDirection(
+          canonical_solution - measured_q, params.robot.velocity_limits,
+          params.task.planning_time_step);
   posture.target = measured_q + joint_step;
   posture.finite = posture.target.allFinite();
   for (int sample = 0; sample <= kSweptPostureSamples && posture.finite;
@@ -848,12 +868,10 @@ CollisionAwarePostureResult SolveCollisionAwarePostureStep(
               << " canonical_q=" << q_solution.transpose()
               << " measured_q=" << measured_q.transpose() << std::endl;
   }
-  Eigen::VectorXd joint_step = q_solution - measured_q;
-  for (int i = 0; i < joint_step.size(); ++i) {
-    const double step_limit =
-        params.robot.velocity_limits[i] * params.task.planning_time_step;
-    joint_step[i] = std::clamp(joint_step[i], -step_limit, step_limit);
-  }
+  const Eigen::VectorXd joint_step =
+      LimitXarmFullSamplingC3JointStepPreservingDirection(
+          q_solution - measured_q, params.robot.velocity_limits,
+          params.task.planning_time_step);
   posture.target = measured_q + joint_step;
   posture.finite = posture.target.allFinite();
   if (posture.finite) {
@@ -1624,53 +1642,173 @@ int DoMain(int argc, char* argv[]) {
                             .solve.dynamic_rollout_cost)
               << std::endl;
     XarmFullSamplingC3CandidateBuffer execution_candidate_buffer;
-    execution_candidate_buffer.total_candidates =
-        full_candidate_buffer.total_candidates;
-    execution_candidate_buffer.unsuccessful =
-        full_candidate_buffer.unsuccessful;
-    for (const auto& candidate : full_candidate_buffer.successful) {
-      const double predicted_lateral_drift = std::abs(
-          candidate.solve.dynamic_terminal_object_position.x() -
-          params.object.goal_pose.x());
-      const bool lateral_gate = predicted_lateral_drift <=
-          params.controller.lateral_drift_tolerance;
-      std::cout << "full_sampling_c3plus_executable_candidate name="
-                << candidate.sample_name
-                << " point_O=" << candidate.sample_point_O.transpose()
-                << " normal_O=" << candidate.sample_normal_O.transpose()
-                << " cost=" << candidate.solve.dynamic_rollout_cost
-                << " terminal_object_W="
-                << candidate.solve.dynamic_terminal_object_position.transpose()
-                << " predicted_lateral_drift=" << predicted_lateral_drift
-                << " lateral_gate="
-                << (lateral_gate ? "PASS" : "FAIL")
-                << std::endl;
-      bool acquisition_gate = false;
-      {
+    int initial_lateral_safe_candidates = 0;
+    int initial_acquisition_feasible_candidates = 0;
+    int initial_corridor_prefix_candidates = 0;
+    int initial_contact_prefix_conformant_candidates = 0;
+    std::string initial_admission_source = "workspace_filtered";
+    bool initial_contact_feasible_replenishment = false;
+    auto evaluate_initial_admission =
+        [&](const XarmFullSamplingC3CandidateBuffer& admission_buffer,
+            const char* source) {
+      execution_candidate_buffer = {};
+      execution_candidate_buffer.total_candidates =
+          admission_buffer.total_candidates;
+      execution_candidate_buffer.unsuccessful =
+          admission_buffer.unsuccessful;
+      initial_lateral_safe_candidates = 0;
+      initial_acquisition_feasible_candidates = 0;
+      initial_corridor_prefix_candidates = 0;
+      initial_contact_prefix_conformant_candidates = 0;
+      initial_admission_source = source;
+      for (const auto& full_candidate : admission_buffer.successful) {
+        const double full_predicted_lateral_drift = std::abs(
+            full_candidate.solve.dynamic_terminal_object_position.x() -
+            params.object.goal_pose.x());
+        const bool full_lateral_gate = full_predicted_lateral_drift <=
+            params.controller.lateral_drift_tolerance;
+        const auto corridor_prefix =
+            BuildXarmFullSamplingC3CorridorSafePrefix(
+                full_candidate, params.object.goal_pose.x(),
+                params.controller.lateral_drift_tolerance);
+        const bool use_corridor_prefix =
+            !full_lateral_gate && corridor_prefix.accepted;
+        const XarmFullSamplingC3CandidateReceipt& candidate =
+            use_corridor_prefix ? corridor_prefix.execution_candidate
+                                : full_candidate;
+        const double predicted_lateral_drift = std::abs(
+            candidate.solve.dynamic_terminal_object_position.x() -
+            params.object.goal_pose.x());
+        const bool lateral_gate =
+            (full_lateral_gate || use_corridor_prefix) &&
+            predicted_lateral_drift <=
+                params.controller.lateral_drift_tolerance;
+        const auto predicted_contact_prefix =
+            EvaluateXarmFullSamplingC3PredictedContactPrefix(
+                candidate, params.controller.pusher_radius,
+                params.controller.contact_activation_tolerance);
+        const bool contact_prefix_gate =
+            predicted_contact_prefix.accepted;
+        initial_lateral_safe_candidates += static_cast<int>(lateral_gate);
+        initial_corridor_prefix_candidates +=
+            static_cast<int>(use_corridor_prefix);
+        initial_contact_prefix_conformant_candidates +=
+            static_cast<int>(contact_prefix_gate);
+        std::cout << "full_sampling_c3plus_executable_candidate name="
+                  << candidate.sample_name
+                  << " source=" << source
+                  << " point_O=" << candidate.sample_point_O.transpose()
+                  << " normal_O=" << candidate.sample_normal_O.transpose()
+                  << " cost=" << candidate.solve.dynamic_rollout_cost
+                  << " full_terminal_object_W="
+                  << full_candidate.solve.dynamic_terminal_object_position
+                         .transpose()
+                  << " terminal_object_W="
+                  << candidate.solve.dynamic_terminal_object_position
+                         .transpose()
+                  << " full_predicted_lateral_drift="
+                  << full_predicted_lateral_drift
+                  << " predicted_lateral_drift=" << predicted_lateral_drift
+                  << " full_lateral_gate="
+                  << (full_lateral_gate ? "PASS" : "FAIL")
+                  << " corridor_prefix="
+                  << (use_corridor_prefix ? "PASS" : "NOT_USED")
+                  << " original_knots="
+                  << corridor_prefix.original_state_knots
+                  << " retained_knots="
+                  << corridor_prefix.retained_state_knots
+                  << " contact_prefix_gate="
+                  << (contact_prefix_gate ? "PASS" : "FAIL")
+                  << " maximum_absolute_signed_gap="
+                  << predicted_contact_prefix.maximum_absolute_signed_gap
+                  << " maximum_separating_gap="
+                  << predicted_contact_prefix.maximum_separating_gap
+                  << " maximum_contact_height_error="
+                  << predicted_contact_prefix.maximum_contact_height_error
+                  << " lateral_gate="
+                  << (lateral_gate ? "PASS" : "FAIL") << std::endl;
         const auto acquisition =
             EvaluateFullCandidateAcquisition(params, candidate);
-        acquisition_gate = acquisition.swept_capsule_clear &&
-            acquisition.ik_reached;
+        const bool swept_capsule_clear =
+            acquisition.swept_capsule_clear;
+        const bool ik_reached = acquisition.ik_reached;
+        const bool acquisition_gate = swept_capsule_clear && ik_reached;
+        initial_acquisition_feasible_candidates +=
+            static_cast<int>(acquisition_gate);
+        const bool admission_gate =
+            IsFullSamplingC3InitialCandidateAdmitted(
+                lateral_gate, swept_capsule_clear, ik_reached) &&
+            contact_prefix_gate;
         std::cout << "full_sampling_c3plus_candidate_acquisition name="
-                  << candidate.sample_name << " swept_capsule_clear="
-                  << acquisition.swept_capsule_clear << " ik_reached="
-                  << acquisition.ik_reached << " ik_steps="
+                  << candidate.sample_name
+                  << " source=" << source
+                  << " swept_capsule_clear=" << swept_capsule_clear
+                  << " ik_reached=" << ik_reached << " ik_steps="
                   << acquisition.ik_steps << " failed_waypoint="
-                  << acquisition.failed_waypoint << " gate="
-                  << (acquisition_gate ? "PASS" : "FAIL") << std::endl;
+                  << acquisition.failed_waypoint
+                  << " acquisition_gate="
+                  << (acquisition_gate ? "PASS" : "FAIL")
+                  << " lateral_gate="
+                  << (lateral_gate ? "PASS" : "FAIL")
+                  << " contact_prefix_gate="
+                  << (contact_prefix_gate ? "PASS" : "FAIL")
+                  << " corridor_prefix=" << use_corridor_prefix
+                  << " admission_gate="
+                  << (admission_gate ? "PASS" : "FAIL") << std::endl;
+        if (admission_gate) {
+          execution_candidate_buffer.successful.push_back(candidate);
+        } else {
+          execution_candidate_buffer.unsuccessful.push_back(full_candidate);
+        }
       }
-      if (acquisition_gate) {
-        execution_candidate_buffer.successful.push_back(candidate);
-      } else {
-        execution_candidate_buffer.unsuccessful.push_back(candidate);
-      }
+      execution_candidate_buffer.accepted =
+          execution_candidate_buffer.total_candidates > 0 &&
+          !execution_candidate_buffer.successful.empty() &&
+          execution_candidate_buffer.total_candidates == static_cast<int>(
+              execution_candidate_buffer.successful.size() +
+              execution_candidate_buffer.unsuccessful.size());
+    };
+    evaluate_initial_admission(full_candidate_buffer, "workspace_filtered");
+    if (execution_candidate_buffer.successful.empty()) {
+      const auto replenished =
+          BuildXarmFullSamplingC3ContactFeasibleCandidateBuffer(
+              full_candidate_buffer);
+      initial_contact_feasible_replenishment = true;
+      std::cout << "full_sampling_c3plus_initial_replenishment="
+                << (replenished.successful.empty() ? "FAIL" : "PASS")
+                << " workspace_candidates="
+                << full_candidate_buffer.successful.size()
+                << " dynamic_contact_candidates="
+                << replenished.successful.size()
+                << " mandatory_lateral_corridor=1"
+                << " mandatory_capsule_execution=1"
+                << " mandatory_live_ik=1" << std::endl;
+      evaluate_initial_admission(replenished, "contact_feasible_replenished");
     }
-    execution_candidate_buffer.accepted =
-        execution_candidate_buffer.total_candidates > 0 &&
-        !execution_candidate_buffer.successful.empty() &&
-        execution_candidate_buffer.total_candidates == static_cast<int>(
-            execution_candidate_buffer.successful.size() +
-            execution_candidate_buffer.unsuccessful.size());
+    std::cout << "full_sampling_c3plus_initial_candidate_admission="
+              << (execution_candidate_buffer.successful.empty()
+                      ? "FAIL"
+                      : "PASS")
+              << " dynamic_candidates="
+              << (initial_contact_feasible_replenishment
+                      ? BuildXarmFullSamplingC3ContactFeasibleCandidateBuffer(
+                            full_candidate_buffer).successful.size()
+                      : full_candidate_buffer.successful.size())
+              << " lateral_safe_candidates="
+              << initial_lateral_safe_candidates
+              << " acquisition_feasible_candidates="
+              << initial_acquisition_feasible_candidates
+              << " corridor_prefix_candidates="
+              << initial_corridor_prefix_candidates
+              << " contact_prefix_conformant_candidates="
+              << initial_contact_prefix_conformant_candidates
+              << " admitted_candidates="
+              << execution_candidate_buffer.successful.size()
+              << " source=" << initial_admission_source
+              << " contact_feasible_replenishment="
+              << initial_contact_feasible_replenishment
+              << " lateral_gate_authoritative=1"
+              << std::endl;
     const XarmFullSamplingC3TaskSpacePlan selected_plan =
         BuildXarmFullSamplingC3TaskSpacePlan(
             execution_candidate_buffer, params.task.planning_time_step);
@@ -1698,8 +1836,11 @@ int DoMain(int argc, char* argv[]) {
               << selected_plan_terminal.transpose()
               << std::endl;
     if (!selected_plan.accepted) {
-      throw std::runtime_error(
-          "full Sampling-C3+ selected task-space plan gate failed");
+      std::cout << "full_sampling_c3plus_acceptance_gate=FAIL"
+                << " reason=initial_candidate_admission_failed"
+                << " return_code=3"
+                << std::endl;
+      return 3;
     }
     drake::multibody::MultibodyPlant<double> acquisition_plant(0.0);
     drake::multibody::Parser(&acquisition_plant).AddModels(params.robot.model);
@@ -1847,6 +1988,11 @@ int DoMain(int argc, char* argv[]) {
           &full_lcm, params.lcm.robot_state_channel);
       systems::Subscriber<dairlib::lcmt_object_state> full_object_subscriber(
           &full_lcm, params.lcm.object_state_channel);
+      // Derived channel: the simulator's live physical-contact receipt for
+      // dwell joining (Gate 381). Not a configured key, so the canonical
+      // config SHA-256 stays pinned.
+      systems::Subscriber<dairlib::lcmt_robot_output> full_contact_subscriber(
+          &full_lcm, params.lcm.object_state_channel + "_CONTACT");
       while (full_state_subscriber.count() == 0 ||
              full_object_subscriber.count() == 0) {
         full_lcm.HandleSubscriptions(100);
@@ -1867,12 +2013,20 @@ int DoMain(int argc, char* argv[]) {
       for (int knot = 0; knot < axis.datapoints.cols(); ++knot) {
         axis.datapoints.col(knot) = vertical_axis;
       }
+      LcmTrajectory::Trajectory force;
+      force.traj_name = "end_effector_force_target";
+      force.datatypes = {"fx", "fy", "fz"};
+      force.time_vector = target.time_vector;
+      force.datapoints = osc_execution_plan.forces_W;
       LcmTrajectory trajectory(
-          {target, axis}, {target.traj_name, axis.traj_name}, target.traj_name,
+          {target, axis, force},
+          {target.traj_name, axis.traj_name, force.traj_name}, target.traj_name,
           "Full Sampling-C3+ collision-aware xArm execution plan", false);
       dairlib::lcmt_timestamped_saved_traj message;
       message.utime = full_state_subscriber.message().utime;
       message.saved_traj = trajectory.GenerateLcmObject();
+      message.saved_traj.metadata.description =
+          "collision_aware_execution_plan";
       for (int publish = 0; publish < FLAGS_publish_count; ++publish) {
         drake::lcm::Publish(&full_lcm,
                             params.lcm.tracking_trajectory_channel, message);
@@ -1975,6 +2129,87 @@ int DoMain(int argc, char* argv[]) {
             std::atan2(2.0 * (qw * qz + qx * qy),
                        1.0 - 2.0 * (qy * qy + qz * qz)));
       };
+      auto log_contact_transaction = [
+          &](const std::string& phase, const std::string& sample_name,
+              const Eigen::Vector2d& sample_point_O,
+              const Eigen::Vector2d& sample_normal_O,
+              bool predicted_prefix_owner, bool geometric_contact,
+              bool dwell_owner, int dwell_steps, double signed_gap,
+              double tip_hold_error,
+              const XarmFullSamplingC3PhysicalDwellJoinReceipt*
+                  physical_join = nullptr) {
+        const Eigen::Vector3d object_pose = read_full_object_pose();
+        const Eigen::Rotation2Dd R_WO(object_pose.z());
+        const Eigen::Vector2d boundary_W =
+            object_pose.head<2>() + R_WO * sample_point_O;
+        const Eigen::Vector2d normal_W = R_WO * sample_normal_O;
+        std::cout << "full_sampling_c3plus_contact_transaction=ACTIVE"
+                  << " latest_utime="
+                  << full_state_subscriber.message().utime
+                  << " phase=" << phase
+                  << " sample=" << sample_name
+                  << " boundary_W_x=" << boundary_W.x()
+                  << " boundary_W_y=" << boundary_W.y()
+                  << " normal_W_x=" << normal_W.x()
+                  << " normal_W_y=" << normal_W.y()
+                  << " predicted_prefix_owner="
+                  << predicted_prefix_owner
+                  << " geometric_contact=" << geometric_contact
+                  << " dwell_owner=" << dwell_owner
+                  << " dwell_steps=" << dwell_steps
+                  << " signed_gap_m=" << signed_gap
+                  << " tip_hold_error_m=" << tip_hold_error;
+        if (physical_join != nullptr) {
+          std::cout << " phys_fresh=" << physical_join->receipt_fresh
+                    << " phys_active=" << physical_join->contact_active
+                    << " phys_face=" << physical_join->face_identity
+                    << " phys_polarity="
+                    << physical_join->normal_polarity
+                    << " phys_joined=" << physical_join->accepted
+                    << " phys_face_distance_m="
+                    << physical_join->face_distance
+                    << " phys_inward_force_N="
+                    << physical_join->inward_normal_force;
+        }
+        std::cout << std::endl;
+      };
+      auto evaluate_physical_dwell_join = [&](
+          const Eigen::Vector2d& sample_point_O,
+          const Eigen::Vector2d& sample_normal_O) {
+        const bool receipt_present = full_contact_subscriber.count() > 0;
+        int64_t receipt_utime = 0;
+        bool receipt_active = false;
+        Eigen::Vector2d contact_xy_W = Eigen::Vector2d::Zero();
+        Eigen::Vector2d force_xy_W = Eigen::Vector2d::Zero();
+        if (receipt_present) {
+          const auto& message = full_contact_subscriber.message();
+          receipt_utime = message.utime;
+          auto value = [&](const std::string& name) {
+            for (int i = 0; i < message.num_positions; ++i) {
+              if (message.position_names[i] == name) {
+                return message.position[i];
+              }
+            }
+            throw std::runtime_error(
+                "full Sampling-C3+ contact receipt missing " + name);
+          };
+          receipt_active = value("contact_active") > 0.5;
+          contact_xy_W = Eigen::Vector2d(value("contact_point_x"),
+                                         value("contact_point_y"));
+          force_xy_W = Eigen::Vector2d(value("contact_force_x"),
+                                       value("contact_force_y"));
+        }
+        const Eigen::Vector3d object_pose = read_full_object_pose();
+        const Eigen::Rotation2Dd R_WO(object_pose.z());
+        return EvaluateXarmFullSamplingC3PhysicalDwellJoin(
+            receipt_present, receipt_utime,
+            full_state_subscriber.message().utime,
+            1000LL * FLAGS_full_execution_period_ms, receipt_active,
+            contact_xy_W, force_xy_W,
+            object_pose.head<2>() + R_WO * sample_point_O,
+            R_WO * sample_normal_O, params.controller.pusher_radius,
+            params.controller.contact_activation_tolerance);
+      };
       auto read_full_object_velocity = [&]() {
         const auto& object_message = full_object_subscriber.message();
         auto value = [&](const std::string& name) {
@@ -2065,11 +2300,18 @@ int DoMain(int argc, char* argv[]) {
       int reached_waypoints = 1;
       int commanded_subtargets = 0;
       bool measured_lateral_rejected = false;
+      bool initial_contact_response_complete = false;
+      bool initial_contact_productive = false;
+      bool initial_contact_engaged = false;
+      int initial_contact_dwell_updates = 0;
+      int initial_unjoined_dwell_streak = 0;
+      std::optional<Eigen::Vector3d> initial_contact_start_pose;
       double maximum_tracking_error = 0.0;
       for (int waypoint_index = 1;
            waypoint_index < osc_execution_plan.positions_W.cols() &&
            full_execution_updates < FLAGS_full_execution_steps &&
-           !measured_lateral_rejected;
+           !measured_lateral_rejected &&
+           !initial_contact_response_complete;
            ++waypoint_index) {
         const Eigen::Vector3d waypoint =
             osc_execution_plan.positions_W.col(waypoint_index);
@@ -2087,9 +2329,15 @@ int DoMain(int argc, char* argv[]) {
         const double initial_error = (waypoint - current_tip).norm();
         maximum_tracking_error = std::max(maximum_tracking_error,
                                           initial_error);
-        while (!waypoint_reached(current_tip) &&
+        while ((!waypoint_reached(current_tip) ||
+                (waypoint_index + 1 ==
+                     osc_execution_plan.positions_W.cols() &&
+                 initial_contact_engaged &&
+                 initial_contact_dwell_updates <
+                     params.controller.physical_contact_dwell_steps)) &&
                full_execution_updates < FLAGS_full_execution_steps &&
-               !measured_lateral_rejected) {
+               !measured_lateral_rejected &&
+               !initial_contact_response_complete) {
           const double command_step_limit = waypoint_index == 1
               ? params.controller.approach_command_step_limit
               : (waypoint_index <= 3
@@ -2106,12 +2354,14 @@ int DoMain(int argc, char* argv[]) {
           gated_target.time_vector.resize(2);
           gated_target.time_vector[0] =
               full_state_subscriber.message().utime * 1.0e-6;
+          const double command_duration =
+              XarmFullSamplingC3CommandDuration(
+                  command_delta.norm(), params.controller.reposition_speed,
+                  params.task.planning_time_step);
           gated_target.time_vector[1] = gated_target.time_vector[0] +
-              params.task.planning_time_step;
+              command_duration;
           gated_target.datapoints.resize(3, 2);
-          // Hold each bounded measured-state command at both knots. This lets
-          // OscPhaseMux see the actual downward command when descent begins.
-          gated_target.datapoints.col(0) = command_tip;
+          gated_target.datapoints.col(0) = current_tip;
           gated_target.datapoints.col(1) = command_tip;
           LcmTrajectory::Trajectory gated_axis;
           gated_axis.traj_name = "end_effector_stick_axis_target";
@@ -2124,6 +2374,17 @@ int DoMain(int argc, char* argv[]) {
               gated_target, gated_axis};
           std::vector<std::string> gated_target_names{
               gated_target.traj_name, gated_axis.traj_name};
+          LcmTrajectory::Trajectory gated_force;
+          gated_force.traj_name = "end_effector_force_target";
+          gated_force.datatypes = {"fx", "fy", "fz"};
+          gated_force.time_vector = gated_target.time_vector;
+          gated_force.datapoints.resize(3, 2);
+          gated_force.datapoints.col(0) =
+              osc_execution_plan.forces_W.col(waypoint_index);
+          gated_force.datapoints.col(1) =
+              osc_execution_plan.forces_W.col(waypoint_index);
+          gated_targets.push_back(gated_force);
+          gated_target_names.push_back(gated_force.traj_name);
           if (waypoint_index <= 4) {
             const Eigen::VectorXd current_q =
                 acquisition_plant.GetPositions(*acquisition_context);
@@ -2154,6 +2415,8 @@ int DoMain(int argc, char* argv[]) {
           dairlib::lcmt_timestamped_saved_traj gated_message;
           gated_message.utime = full_state_subscriber.message().utime;
           gated_message.saved_traj = gated_trajectory.GenerateLcmObject();
+          gated_message.saved_traj.metadata.description =
+              "gated_execution_subtarget";
           ++commanded_subtargets;
           // Match the reduced controller's receding measured-target contract:
           // advance the bounded target on each control-period observation,
@@ -2173,6 +2436,130 @@ int DoMain(int argc, char* argv[]) {
           }
           current_tip = read_full_tip();
           ++full_execution_updates;
+          const int first_contact_waypoint_index = std::max(
+              1, osc_execution_plan.acquisition_knots - 1);
+          if (waypoint_index >= first_contact_waypoint_index) {
+            const auto contact_receipt =
+                EvaluateFullSamplingC3ContactDwellContinuation(
+                    waypoint, current_tip, read_full_object_pose(),
+                    selected_plan.sample_point_O,
+                    selected_plan.sample_normal_O,
+                    params.controller.pusher_radius,
+                    params.controller.contact_activation_tolerance);
+            const bool contact_engagement_complete =
+                IsFullSamplingC3ContactEngagementComplete(
+                    contact_receipt.signed_contact_gap);
+            // Dwell accounting is physically authoritative (user-authorized
+            // Gate-381 option b): credit requires the joined receipt, and
+            // completeness compares against the measured-recalibrated
+            // physical_contact_dwell_steps bar.
+            const auto physical_join = evaluate_physical_dwell_join(
+                selected_plan.sample_point_O,
+                selected_plan.sample_normal_O);
+            if (!initial_contact_engaged && contact_engagement_complete &&
+                physical_join.accepted) {
+              initial_contact_engaged = true;
+              initial_contact_start_pose = read_full_object_pose();
+              std::cout <<
+                  "full_sampling_c3plus_initial_contact_engagement=PASS"
+                        << " signed_gap_m="
+                        << contact_receipt.signed_contact_gap
+                        << " object_pose="
+                        << initial_contact_start_pose->transpose()
+                        << " updates=" << full_execution_updates
+                        << std::endl;
+            }
+            const bool contact_continuation =
+                IsFullSamplingC3LatchedContactContinuation(
+                    initial_contact_engaged, contact_receipt);
+            const bool physically_present =
+                physical_join.receipt_fresh &&
+                physical_join.contact_active &&
+                physical_join.face_identity;
+            initial_unjoined_dwell_streak =
+                (contact_continuation && !physically_present)
+                    ? initial_unjoined_dwell_streak + 1 : 0;
+            const bool physically_lost_latch =
+                initial_unjoined_dwell_streak >=
+                    kPhysicalDwellLossDebounceSteps;
+            if (contact_continuation && !physically_lost_latch) {
+              if (!initial_contact_start_pose.has_value()) {
+                initial_contact_start_pose = read_full_object_pose();
+              }
+              if (physical_join.accepted) {
+                ++initial_contact_dwell_updates;
+              }
+            } else if (initial_contact_engaged) {
+              std::cout <<
+                  "full_sampling_c3plus_initial_contact_continuation="
+                  "RESET prior_updates=" << initial_contact_dwell_updates
+                        << " signed_gap_m="
+                        << contact_receipt.signed_contact_gap
+                        << " tip_hold_error_m="
+                        << contact_receipt.tip_hold_error
+                        << " physically_lost_latch="
+                        << physically_lost_latch << std::endl;
+              initial_contact_dwell_updates = 0;
+              initial_contact_engaged = false;
+              initial_contact_start_pose.reset();
+              initial_unjoined_dwell_streak = 0;
+            }
+            log_contact_transaction(
+                "initial_contact", selected_plan.sample_name,
+                selected_plan.sample_point_O, selected_plan.sample_normal_O,
+                true, contact_receipt.contact_gap_accepted,
+                contact_continuation, initial_contact_dwell_updates,
+                contact_receipt.signed_contact_gap,
+                contact_receipt.tip_hold_error, &physical_join);
+            if (initial_contact_start_pose.has_value() &&
+                initial_contact_dwell_updates >=
+                    params.controller.physical_contact_dwell_steps) {
+              const Eigen::Vector3d measured_end_pose =
+                  read_full_object_pose();
+              const auto component_transaction =
+                  EvaluateXarmFullSamplingC3ComponentTransaction(
+                      *initial_contact_start_pose, measured_end_pose,
+                      params.object.goal_pose,
+                      params.task.translation_tolerance,
+                      params.task.orientation_tolerance,
+                      params.controller.successor_minimum_translation_progress,
+                      params.controller.successor_minimum_yaw_progress);
+              const auto measured_spatial_pose =
+                  read_full_object_spatial_pose();
+              const bool object_upright = IsXarmFullSamplingC3ObjectUpright(
+                  measured_spatial_pose.first, measured_spatial_pose.second,
+                  params.object.resting_height,
+                  params.controller.contact_activation_tolerance,
+                  params.task.orientation_tolerance);
+              initial_contact_productive =
+                  object_upright && component_transaction.accepted;
+              initial_contact_response_complete = true;
+              std::cout << "full_sampling_c3plus_initial_contact_dwell="
+                        << (initial_contact_productive ? "PASS" : "REJECT")
+                        << " response_steps="
+                        << initial_contact_dwell_updates
+                        << " object_upright=" << object_upright
+                        << " start_pose="
+                        << initial_contact_start_pose->transpose()
+                        << " end_pose=" << measured_end_pose.transpose()
+                        << " translation_progress_m="
+                        << component_transaction.terminal.translation_progress
+                        << " orientation_progress_rad="
+                        << component_transaction.terminal.orientation_progress
+                        << " translation_nonregressive="
+                        << component_transaction.terminal
+                               .translation_nonregressive
+                        << " orientation_nonregressive="
+                        << component_transaction.terminal
+                               .orientation_nonregressive
+                        << " component_transaction="
+                        << component_transaction.accepted
+                        << " signed_gap_m="
+                        << contact_receipt.signed_contact_gap
+                        << " updates=" << full_execution_updates
+                        << std::endl;
+            }
+          }
           const double measured_lateral_drift = std::abs(
               read_full_object_x() - params.object.goal_pose.x());
           if (measured_lateral_drift >
@@ -2185,6 +2572,12 @@ int DoMain(int argc, char* argv[]) {
                       << params.controller.lateral_drift_tolerance
                       << std::endl;
           }
+        }
+        if (initial_contact_response_complete) {
+          if (initial_contact_productive) {
+            reached_waypoints = osc_execution_plan.positions_W.cols();
+          }
+          break;
         }
         if (waypoint_reached(current_tip)) {
           ++reached_waypoints;
@@ -2207,7 +2600,8 @@ int DoMain(int argc, char* argv[]) {
       bool contact_cycle_budget_deferred = false;
       std::vector<XarmFullSamplingC3MeasuredCycleReceipt>
           measured_productive_cycles;
-      if (measured_lateral_rejected &&
+      if ((measured_lateral_rejected ||
+           initial_contact_response_complete) &&
           full_execution_updates < FLAGS_full_execution_steps) {
         const int initial_recovery_start_updates = full_execution_updates;
         auto execute_posture_waypoint = [&](const Eigen::Vector3d& waypoint,
@@ -2223,7 +2617,10 @@ int DoMain(int argc, char* argv[]) {
                                             bool enforce_preview_conformance =
                                                 false,
                                             bool measured_vertical_translation =
-                                                false) {
+                                                false,
+                                            const Eigen::Vector3d&
+                                                feedforward_force_W =
+                                                    Eigen::Vector3d::Zero()) {
           refresh_full_measurements(phase);
           Eigen::Vector3d current_tip = read_full_tip();
           const double phase_entry_waypoint_error =
@@ -2234,12 +2631,37 @@ int DoMain(int argc, char* argv[]) {
               phase_entry_waypoint_error;
           const bool use_best_so_far_conformance =
               phase.find("neutral_anchor") != std::string::npos;
+          bool contact_geometry_engaged = false;
           int consecutive_conformance_violation_updates = 0;
           const int required_conformance_violation_updates = std::max(
               1, static_cast<int>(std::ceil(
                      params.task.planning_time_step /
                      (1.0e-3 * FLAGS_full_execution_period_ms))));
           auto posture_waypoint_reached = [&]() {
+            if (contact_engagement) {
+              const auto contact_receipt =
+                  EvaluateFullSamplingC3ContactDwellContinuation(
+                      waypoint, current_tip, read_full_object_pose(),
+                      sample.point, sample.normal,
+                      params.controller.pusher_radius,
+                      params.controller.contact_activation_tolerance);
+              const bool contact_engaged =
+                  IsFullSamplingC3ContactEngagementComplete(
+                      contact_receipt.signed_contact_gap);
+              log_contact_transaction(
+                  phase, sample.name, sample.point, sample.normal, false,
+                  contact_receipt.contact_gap_accepted, false, 0,
+                  contact_receipt.signed_contact_gap,
+                  contact_receipt.tip_hold_error);
+              if (contact_engaged) {
+                contact_geometry_engaged = true;
+                return true;
+              }
+              // A positive gap, even one inside the activation band, is not a
+              // physical acquisition receipt.  Do not fall through to the
+              // ordinary waypoint-settle test.
+              return false;
+            }
             const double waypoint_error =
                 (vertical_release || measured_vertical_translation)
                 ? std::abs(waypoint.z() - current_tip.z())
@@ -2426,6 +2848,22 @@ int DoMain(int argc, char* argv[]) {
                           << allow_home_seed_fallback << std::endl;
                 return false;
               }
+              const double current_tip_error =
+                  (command_tip - current_tip).norm();
+              if (enforce_preview_conformance &&
+                  !IsFullSamplingC3PostureStepProgressive(
+                      current_tip_error, posture.target_tip_error,
+                      params.controller.contact_activation_tolerance)) {
+                std::cout <<
+                    "full_sampling_c3plus_posture_progress=REJECT phase="
+                          << phase
+                          << " current_tip_error_m=" << current_tip_error
+                          << " target_tip_error_m="
+                          << posture.target_tip_error
+                          << " updates=" << full_execution_updates
+                          << std::endl;
+                return false;
+              }
               if (posture.home_seed_fallback) {
                 std::cout <<
                     "full_sampling_c3plus_verticalization_home_seed=PASS"
@@ -2440,13 +2878,18 @@ int DoMain(int argc, char* argv[]) {
             }
             const double time =
                 full_state_subscriber.message().utime * 1.0e-6;
+            const double command_duration =
+                XarmFullSamplingC3CommandDuration(
+                    (command_tip - current_tip).norm(),
+                    params.controller.reposition_speed,
+                    params.task.planning_time_step);
             LcmTrajectory::Trajectory task;
             task.traj_name = "end_effector_position_target";
             task.datatypes = {"x", "y", "z"};
             task.time_vector = Eigen::Vector2d(
-                time, time + params.task.planning_time_step);
+                time, time + command_duration);
             task.datapoints.resize(3, 2);
-            task.datapoints.col(0) = command_tip;
+            task.datapoints.col(0) = current_tip;
             task.datapoints.col(1) = command_tip;
             LcmTrajectory::Trajectory axis_target;
             axis_target.traj_name = "end_effector_stick_axis_target";
@@ -2463,15 +2906,24 @@ int DoMain(int argc, char* argv[]) {
             posture_target.datapoints.resize(current_q.size(), 2);
             posture_target.datapoints.col(0) = current_q;
             posture_target.datapoints.col(1) = posture_q;
+            LcmTrajectory::Trajectory force_target;
+            force_target.traj_name = "end_effector_force_target";
+            force_target.datatypes = {"fx", "fy", "fz"};
+            force_target.time_vector = task.time_vector;
+            force_target.datapoints.resize(3, 2);
+            force_target.datapoints.col(0) = feedforward_force_W;
+            force_target.datapoints.col(1) = feedforward_force_W;
             LcmTrajectory command(
-                {task, axis_target, posture_target},
+                {task, axis_target, posture_target, force_target},
                 {task.traj_name, axis_target.traj_name,
-                 posture_target.traj_name},
+                 posture_target.traj_name, force_target.traj_name},
                 task.traj_name,
                 "Full Sampling-C3+ measured corrective reposition", false);
             dairlib::lcmt_timestamped_saved_traj command_message;
             command_message.utime = full_state_subscriber.message().utime;
             command_message.saved_traj = command.GenerateLcmObject();
+            command_message.saved_traj.metadata.description =
+                "corrective_reposition:" + phase;
             drake::lcm::Publish(&full_lcm,
                                 params.lcm.tracking_trajectory_channel,
                                 command_message);
@@ -2534,7 +2986,7 @@ int DoMain(int argc, char* argv[]) {
             if (stop_on_lateral_corridor &&
                 std::abs(read_full_object_x() -
                          params.object.goal_pose.x()) <=
-                    params.controller.lateral_drift_tolerance) {
+                    progress_lateral_reserve_limit) {
               break;
             }
             if (reject_on_lateral_exit &&
@@ -2549,7 +3001,7 @@ int DoMain(int argc, char* argv[]) {
               (stop_on_lateral_corridor &&
                std::abs(read_full_object_x() -
                         params.object.goal_pose.x()) <=
-                   params.controller.lateral_drift_tolerance);
+                   progress_lateral_reserve_limit);
           std::cout << "full_sampling_c3plus_corrective_phase="
                     << (reached ? "PASS" : "FAIL") << " phase=" << phase
                     << " updates=" << full_execution_updates
@@ -2560,8 +3012,54 @@ int DoMain(int argc, char* argv[]) {
                            params.task.planning_time_step
                     << " measured_vertical_translation="
                     << measured_vertical_translation
+                    << " contact_geometry_engaged="
+                    << contact_geometry_engaged
                     << std::endl;
           return reached;
+        };
+
+        auto wait_for_tip_quiescence = [&](const std::string& phase) {
+          int consecutive_settled_updates = 0;
+          const int required_settled_updates = std::max(
+              1, static_cast<int>(std::ceil(
+                     params.task.planning_time_step /
+                     (1.0e-3 * FLAGS_full_execution_period_ms))));
+          refresh_full_measurements(phase);
+          // One budget update per full execution period, matching every
+          // other measured loop. Charging one update per 2 ms state message
+          // overcounted quiescence waits tenfold (a 6.9 s terminal settle
+          // was billed 3,448 updates) and sampled the settle test on a 6 ms
+          // window instead of the intended planning interval.
+          while (consecutive_settled_updates < required_settled_updates &&
+                 full_execution_updates < FLAGS_full_execution_steps) {
+            const int64_t next_utime =
+                full_state_subscriber.message().utime +
+                1000LL * FLAGS_full_execution_period_ms;
+            while (full_state_subscriber.message().utime < next_utime) {
+              full_lcm.HandleSubscriptions(100);
+              while (full_lcm.HandleSubscriptions(0) > 0) {
+              }
+            }
+            read_full_tip();
+            const bool settled = IsFullSamplingC3WaypointSettled(
+                0.0, read_full_tip_speed(),
+                params.task.planning_time_step,
+                params.controller.contact_activation_tolerance);
+            consecutive_settled_updates = settled
+                ? consecutive_settled_updates + 1
+                : 0;
+            ++full_execution_updates;
+          }
+          const bool accepted =
+              consecutive_settled_updates >= required_settled_updates;
+          std::cout << "full_sampling_c3plus_tip_quiescence="
+                    << (accepted ? "PASS" : "FAIL")
+                    << " phase=" << phase
+                    << " consecutive=" << consecutive_settled_updates
+                    << " required=" << required_settled_updates
+                    << " tip_speed_mps=" << read_full_tip_speed()
+                    << " updates=" << full_execution_updates << std::endl;
+          return accepted;
         };
 
         Eigen::Vector3d corrective_object_pose = read_full_object_pose();
@@ -2764,28 +3262,53 @@ int DoMain(int argc, char* argv[]) {
                       << corrective_contact_only_fallback
                       << " object_pose=" << corrective_object_pose.transpose()
                       << std::endl;
-            // The lift preserves the departing face's stick-axis command.
-            // Reorient at the geometry-derived clearance height before any
-            // lateral traverse toward the newly selected corrective face.
-            const bool verticalized = execute_posture_waypoint(
-                lift, corrective_object_pose, corrective_sample,
-                "verticalize", false, false);
-            const bool traversed = verticalized && execute_posture_waypoint(
-                corrective_traverse, corrective_object_pose,
-                corrective_sample, "traverse_clear", false, false);
-            const bool lowered = traversed && execute_posture_waypoint(
-                corrective_high, corrective_object_pose, corrective_sample,
-                "lower", false, false);
-            const bool descended = lowered && execute_posture_waypoint(
-                corrective_standoff, corrective_object_pose,
-                corrective_sample, "descend", false, false);
-            corrective_contact_handoff = descended &&
-                execute_posture_waypoint(
-                    corrective_contact, corrective_object_pose,
-                    corrective_sample, "contact", false, true, false, true);
-            std::cout << "full_sampling_c3plus_corrective_contact_handoff="
-                      << (corrective_contact_handoff ? "PASS" : "FAIL")
-                      << " updates=" << full_execution_updates << std::endl;
+            const double corrective_entry_lateral_drift = std::abs(
+                read_full_object_x() - params.object.goal_pose.x());
+            const bool corrective_contact_required =
+                measured_lateral_rejected ||
+                corrective_entry_lateral_drift >
+                    progress_lateral_reserve_limit;
+            if (!corrective_contact_required) {
+              // The initial C3 contact can be productive while already
+              // inside the reserved x corridor.  It has been released and
+              // lifted above the capsule; do not create a lateral correction
+              // solely to enter the receding-planning state machine.
+              corrective_contact_handoff = true;
+              std::cout <<
+                  "full_sampling_c3plus_corrective_contact_handoff=SKIP"
+                        << " reason=lateral_reserve_already_satisfied"
+                        << " drift_m=" << corrective_entry_lateral_drift
+                        << " reserve_limit_m="
+                        << progress_lateral_reserve_limit
+                        << " updates=" << full_execution_updates
+                        << std::endl;
+            } else {
+              // The lift preserves the departing face's stick-axis command.
+              // Reorient at the geometry-derived clearance height before any
+              // lateral traverse toward the newly selected corrective face.
+              const bool verticalized = execute_posture_waypoint(
+                  lift, corrective_object_pose, corrective_sample,
+                  "verticalize", false, false);
+              const bool traversed = verticalized && execute_posture_waypoint(
+                  corrective_traverse, corrective_object_pose,
+                  corrective_sample, "traverse_clear", false, false);
+              const bool lowered = traversed && execute_posture_waypoint(
+                  corrective_high, corrective_object_pose, corrective_sample,
+                  "lower", false, false);
+              const bool descended = lowered && execute_posture_waypoint(
+                  corrective_standoff, corrective_object_pose,
+                  corrective_sample, "descend", false, false);
+              corrective_contact_handoff = descended &&
+                  execute_posture_waypoint(
+                      corrective_contact, corrective_object_pose,
+                      corrective_sample, "contact", false, true, false,
+                      true);
+              std::cout << "full_sampling_c3plus_corrective_contact_handoff="
+                        << (corrective_contact_handoff ? "PASS" : "FAIL")
+                        << " drift_m=" << corrective_entry_lateral_drift
+                        << " updates=" << full_execution_updates
+                        << std::endl;
+            }
             if (corrective_contact_handoff) {
               const double recovery_start_signed_error =
                   read_full_object_x() - params.object.goal_pose.x();
@@ -2890,12 +3413,28 @@ int DoMain(int argc, char* argv[]) {
                   break;
                 }
                 if (full_execution_updates == updates_before_release) {
+                  // A spuriously entry-reached waypoint publishes nothing:
+                  // residual tip speed widens the settle prediction past the
+                  // padded sub-clearance step. Wait one execution period so
+                  // the tip slows, then retry from the fresh measured state
+                  // instead of abandoning the release microns short. Every
+                  // retry charges the budget, so this cannot spin free.
+                  const int64_t release_retry_utime =
+                      full_state_subscriber.message().utime +
+                      1000LL * FLAGS_full_execution_period_ms;
+                  while (full_state_subscriber.message().utime <
+                         release_retry_utime) {
+                    full_lcm.HandleSubscriptions(100);
+                    while (full_lcm.HandleSubscriptions(0) > 0) {
+                    }
+                  }
+                  ++full_execution_updates;
                   std::cout <<
-                      "full_sampling_c3plus_corrective_release_progress=FAIL"
-                            << " gap_m=" << release_gap
+                      "full_sampling_c3plus_corrective_release_progress="
+                      "RETRY gap_m=" << release_gap
                             << " updates=" << full_execution_updates
                             << std::endl;
-                  break;
+                  continue;
                 }
               }
               std::cout << "full_sampling_c3plus_dynamic_release="
@@ -2937,6 +3476,8 @@ int DoMain(int argc, char* argv[]) {
               }
               std::vector<int> measured_release_recovery_updates{
                   full_execution_updates - initial_recovery_start_updates};
+              std::vector<int> measured_contact_phase_updates;
+              std::vector<int> measured_acquisition_updates;
               std::cout <<
                   "full_sampling_c3plus_release_recovery_receipt=PASS"
                         << " phase=initial_corrective"
@@ -2951,17 +3492,95 @@ int DoMain(int argc, char* argv[]) {
               ContactSample active_release_sample = corrective_sample;
               active_release_sample.name = active_release_name.c_str();
               std::set<std::string> live_execution_rejections;
-              std::set<std::string> progress_neutral_anchor_candidates;
+              std::optional<std::string> retained_reposition_target_name;
+              double retained_reposition_target_cost = 0.0;
+              auto invalidate_retained_reposition_target =
+                  [&](const std::string& sample_name) {
+                    if (retained_reposition_target_name == sample_name) {
+                      retained_reposition_target_name.reset();
+                    }
+                  };
               std::vector<XarmFullSamplingC3MeasuredResponse>
                   measured_response_history;
               std::vector<XarmFullSamplingC3MeasuredResponse>
                   recovery_response_history;
               bool bounded_corridor_handoff_pending = false;
+              bool active_release_contact_pending = false;
+              auto release_cycle_entry_contact = [&]() {
+                bool cycle_entry_released = false;
+                while (!cycle_entry_released &&
+                       full_execution_updates < FLAGS_full_execution_steps) {
+                  const Eigen::Vector3d release_object_pose =
+                      read_full_object_pose();
+                  const Eigen::Rotation2Dd release_R_WO(
+                      release_object_pose.z());
+                  const Eigen::Vector2d release_normal_W =
+                      release_R_WO * active_release_sample.normal;
+                  const Eigen::Vector2d release_boundary_W =
+                      release_object_pose.head<2>() +
+                      release_R_WO * active_release_sample.point;
+                  const Eigen::Vector3d release_tip = read_full_tip();
+                  const double release_gap = release_normal_W.dot(
+                      release_tip.head<2>() - release_boundary_W) -
+                      params.controller.pusher_radius;
+                  if (release_gap >= params.controller.approach_clearance) {
+                    cycle_entry_released = true;
+                    break;
+                  }
+                  Eigen::Vector3d release_step = release_tip;
+                  release_step.head<2>() += release_normal_W * std::min(
+                      params.controller.task_space_plan_step_limit,
+                      params.controller.approach_clearance - release_gap +
+                          params.controller.contact_activation_tolerance);
+                  const int updates_before_release = full_execution_updates;
+                  const bool outward_release = execute_posture_waypoint(
+                      release_step, release_object_pose,
+                      active_release_sample, "progress_cycle_release", true,
+                      false);
+                  if (!outward_release ||
+                      full_execution_updates == updates_before_release) {
+                    Eigen::Vector3d vertical_clear = read_full_tip();
+                    vertical_clear.z() = std::max(
+                        vertical_clear.z(),
+                        CapsuleObjectClearanceHeight(params));
+                    cycle_entry_released = execute_posture_waypoint(
+                        vertical_clear, read_full_object_pose(),
+                        active_release_sample,
+                        "progress_cycle_vertical_release", true, false,
+                        false, false, true, false, true);
+                    std::cout <<
+                        "full_sampling_c3plus_receding_vertical_release="
+                              << (cycle_entry_released ? "PASS" : "FAIL")
+                              << " cycle=" << progress_cycle_count
+                              << " updates=" << full_execution_updates
+                              << std::endl;
+                    break;
+                  }
+                }
+                std::cout << "full_sampling_c3plus_receding_release="
+                          << (cycle_entry_released ? "PASS" : "FAIL")
+                          << " cycle=" << progress_cycle_count
+                          << " updates=" << full_execution_updates
+                          << std::endl;
+                if (cycle_entry_released) {
+                  active_release_contact_pending = false;
+                }
+                return cycle_entry_released;
+              };
               while (corrective_lateral_recovery &&
                      full_execution_updates < FLAGS_full_execution_steps) {
                 const int progress_cycle_entry_updates =
                     full_execution_updates;
                 full_task_progress_cycle = false;
+                // A productive response can finish while the pusher remains
+                // physically engaged. Release that owned face before asking
+                // the object to settle; otherwise the settle gate observes a
+                // still-commanded push and fails deterministically.
+                if (active_release_contact_pending &&
+                    !release_cycle_entry_contact()) {
+                  corrective_lateral_recovery = false;
+                  break;
+                }
                 if (!wait_for_planar_settle("progress_replan")) {
                   std::cout <<
                       "full_sampling_c3plus_progress_admission=FAIL"
@@ -2982,6 +3601,8 @@ int DoMain(int argc, char* argv[]) {
                     bounded_corridor_handoff_pending &&
                     cycle_entry_lateral_drift <=
                         params.controller.lateral_drift_tolerance;
+                const bool bounded_contact_recovery_mode =
+                    bounded_handoff_admitted && !cycle_entry_has_reserve;
                 std::cout << "full_sampling_c3plus_lateral_reserve="
                           << ((cycle_entry_has_reserve ||
                                bounded_handoff_admitted) ? "PASS" : "FAIL")
@@ -2992,6 +3613,8 @@ int DoMain(int argc, char* argv[]) {
                           << params.controller.lateral_drift_tolerance
                           << " bounded_handoff="
                           << bounded_handoff_admitted
+                          << " bounded_contact_recovery="
+                          << bounded_contact_recovery_mode
                           << " updates=" << full_execution_updates
                           << std::endl;
                 if (!cycle_entry_has_reserve &&
@@ -3022,9 +3645,18 @@ int DoMain(int argc, char* argv[]) {
                             << cycle_entry_orientation_error << std::endl;
                   break;
                 }
+                const int contact_phase_reservation =
+                    measured_contact_phase_updates.empty()
+                        ? params.controller.successor_minimum_contact_steps
+                        : std::min(
+                              params.controller
+                                  .successor_minimum_contact_steps,
+                              *std::max_element(
+                                  measured_contact_phase_updates.begin(),
+                                  measured_contact_phase_updates.end()));
                 if (!HasFullSamplingC3ContactDwellBudget(
                         full_execution_updates, FLAGS_full_execution_steps,
-                        params.controller.successor_minimum_contact_steps)) {
+                        contact_phase_reservation)) {
                   contact_cycle_budget_deferred = true;
                   std::cout <<
                       "full_sampling_c3plus_contact_cycle_budget="
@@ -3035,76 +3667,13 @@ int DoMain(int argc, char* argv[]) {
                             << FLAGS_full_execution_steps -
                                    full_execution_updates
                             << " required_contact_steps="
-                            << params.controller
-                                   .successor_minimum_contact_steps
+                            << contact_phase_reservation
+                            << " measured_phase_receipts="
+                            << measured_contact_phase_updates.size()
                             << std::endl;
                   break;
                 }
-                if (progress_cycle_count > 0) {
-                  bool cycle_entry_released = false;
-                  while (!cycle_entry_released &&
-                         full_execution_updates <
-                             FLAGS_full_execution_steps) {
-                    const Eigen::Vector3d release_object_pose =
-                        read_full_object_pose();
-                    const Eigen::Rotation2Dd release_R_WO(
-                        release_object_pose.z());
-                    const Eigen::Vector2d release_normal_W =
-                        release_R_WO * active_release_sample.normal;
-                    const Eigen::Vector2d release_boundary_W =
-                        release_object_pose.head<2>() +
-                        release_R_WO * active_release_sample.point;
-                    const Eigen::Vector3d release_tip = read_full_tip();
-                    const double release_gap = release_normal_W.dot(
-                        release_tip.head<2>() - release_boundary_W) -
-                        params.controller.pusher_radius;
-                    if (release_gap >=
-                        params.controller.approach_clearance) {
-                      cycle_entry_released = true;
-                      break;
-                    }
-                    Eigen::Vector3d release_step = release_tip;
-                    release_step.head<2>() += release_normal_W * std::min(
-                        params.controller.task_space_plan_step_limit,
-                        params.controller.approach_clearance - release_gap +
-                            params.controller.contact_activation_tolerance);
-                    const int updates_before_release =
-                        full_execution_updates;
-                    const bool outward_release = execute_posture_waypoint(
-                            release_step, release_object_pose,
-                            active_release_sample,
-                            "progress_cycle_release", true, false);
-                    if (!outward_release ||
-                        full_execution_updates == updates_before_release) {
-                      Eigen::Vector3d vertical_clear = read_full_tip();
-                      vertical_clear.z() = std::max(
-                          vertical_clear.z(),
-                          CapsuleObjectClearanceHeight(params));
-                      cycle_entry_released = execute_posture_waypoint(
-                          vertical_clear, read_full_object_pose(),
-                          active_release_sample,
-                          "progress_cycle_vertical_release", true, false,
-                          false, false, true, false, true);
-                      std::cout <<
-                          "full_sampling_c3plus_receding_vertical_release="
-                                << (cycle_entry_released ? "PASS" : "FAIL")
-                                << " cycle=" << progress_cycle_count
-                                << " updates=" << full_execution_updates
-                                << std::endl;
-                      break;
-                    }
-                  }
-                  std::cout <<
-                      "full_sampling_c3plus_receding_release="
-                            << (cycle_entry_released ? "PASS" : "FAIL")
-                            << " cycle=" << progress_cycle_count
-                            << " updates=" << full_execution_updates
-                            << std::endl;
-                  if (!cycle_entry_released) {
-                    corrective_lateral_recovery = false;
-                    break;
-                  }
-                }
+                refresh_full_measurements("progress_solve_snapshot");
                 const Eigen::Vector3d progress_start_pose =
                     read_full_object_pose();
                 const auto progress_start_velocity =
@@ -3235,11 +3804,22 @@ int DoMain(int argc, char* argv[]) {
                 auto candidate_terminal_pose = [](
                     const XarmFullSamplingC3CandidateReceipt& candidate)
                     -> std::optional<Eigen::Vector3d> {
-                  if (candidate.solve.dynamic_state_trajectory.empty()) {
+                  // Read the terminal of the trajectory that will actually
+                  // execute — the same selection rule the corridor-prefix
+                  // builder truncates. Decoding the full-horizon dynamic
+                  // rollout here ranked prefix-truncated candidates on yaw
+                  // and terminal-descent promises their retained prefix
+                  // never delivers (measured: 0.357 rad promised, 0.069
+                  // executed), while lateral/y already read the prefix end.
+                  const auto& states =
+                      candidate.solve.execution_state_trajectory.empty()
+                          ? candidate.solve.dynamic_state_trajectory
+                          : candidate.solve.execution_state_trajectory;
+                  if (states.empty()) {
                     return std::nullopt;
                   }
-                  const auto terminal_state = XarmFullSamplingC3State::Decode(
-                      candidate.solve.dynamic_state_trajectory.back());
+                  const auto terminal_state =
+                      XarmFullSamplingC3State::Decode(states.back());
                   const Eigen::Matrix3d R_WO =
                       terminal_state.object_quaternion_WO.toRotationMatrix();
                   Eigen::Vector3d terminal_pose;
@@ -3267,6 +3847,45 @@ int DoMain(int argc, char* argv[]) {
                       params.controller.successor_minimum_translation_progress,
                       params.controller.successor_minimum_yaw_progress);
                 };
+                auto prefer_retained_reposition_target =
+                    [&](auto* candidates) {
+                      if (!retained_reposition_target_name.has_value() ||
+                          candidates->empty()) {
+                        return;
+                      }
+                      const auto retained = std::find_if(
+                          candidates->begin(), candidates->end(),
+                          [&](const auto& candidate) {
+                            return candidate.sample_name ==
+                                *retained_reposition_target_name;
+                          });
+                      const bool invalidated =
+                          live_execution_rejections.contains(
+                              *retained_reposition_target_name);
+                      if (retained != candidates->end() &&
+                          ShouldPreserveXarmFullSamplingC3RepositionTarget(
+                              true, invalidated,
+                              retained_reposition_target_cost,
+                              candidates->front().solve.dynamic_rollout_cost,
+                              params.controller
+                                  .successor_cost_hysteresis_fraction)) {
+                        std::rotate(candidates->begin(), retained,
+                                    std::next(retained));
+                        std::cout <<
+                            "full_sampling_c3plus_reposition_target_hysteresis="
+                                  << "RETAIN sample="
+                                  << *retained_reposition_target_name
+                                  << " previous_cost="
+                                  << retained_reposition_target_cost
+                                  << " challenger_cost="
+                                  << (std::next(candidates->begin()) !=
+                                              candidates->end()
+                                          ? std::next(candidates->begin())
+                                                ->solve.dynamic_rollout_cost
+                                          : retained_reposition_target_cost)
+                                  << std::endl;
+                      }
+                    };
                 // Preserve dynamic-cost order within each evidence class.
                 // Compatible measured neighborhoods lead, unseen contacts
                 // retain an exploration path, and incompatible neighborhoods
@@ -3312,6 +3931,7 @@ int DoMain(int argc, char* argv[]) {
                 // candidate below is checked from this same measured state,
                 // so arbitration cannot depend on mutations made by a prior
                 // feasibility probe.
+                refresh_full_measurements("progress_candidate_live_state");
                 read_full_tip();
                 const Eigen::VectorXd progress_start_q =
                     acquisition_plant.GetPositions(*acquisition_context);
@@ -3319,6 +3939,42 @@ int DoMain(int argc, char* argv[]) {
                     monitored_progress_candidates;
                 std::optional<FullCandidateAcquisitionReceipt>
                     selected_progress_acquisition;
+                std::optional<bool>
+                    selected_progress_use_neutral_anchor;
+                auto evaluate_progress_reposition =
+                    [&](const Eigen::VectorXd& measured_q,
+                        const Eigen::Vector3d& measured_object_pose,
+                        const XarmFullSamplingC3CandidateReceipt& candidate,
+                        const ContactSample& release_sample) {
+                      const auto local_receipt =
+                          EvaluateMeasuredCandidateAcquisition(
+                              acquisition_plant,
+                              acquisition_context.get(), params,
+                              measured_q, measured_object_pose, candidate,
+                              release_sample, false);
+                      const bool local_accepted =
+                          local_receipt.swept_capsule_clear &&
+                          local_receipt.ik_reached;
+                      FullCandidateAcquisitionReceipt anchored_receipt;
+                      if (!local_accepted) {
+                        anchored_receipt =
+                            EvaluateMeasuredCandidateAcquisition(
+                                acquisition_plant,
+                                acquisition_context.get(), params,
+                                measured_q, measured_object_pose, candidate,
+                                release_sample, true);
+                      }
+                      const auto decision =
+                          EvaluateFullSamplingC3LocalReposition(
+                              local_receipt.swept_capsule_clear,
+                              local_receipt.ik_reached,
+                              anchored_receipt.swept_capsule_clear,
+                              anchored_receipt.ik_reached);
+                      return std::make_pair(
+                          decision.local_accepted ? local_receipt
+                                                  : anchored_receipt,
+                          decision.use_neutral_anchor);
+                    };
                 double monitored_progress_lateral =
                     std::numeric_limits<double>::infinity();
                 auto evaluate_progress_candidates = [&](const auto& candidates) {
@@ -3547,28 +4203,13 @@ int DoMain(int argc, char* argv[]) {
                       response_conditioned_lateral <=
                           progress_lateral_reserve_limit;
                   if (strict_candidate) {
-                    // Never rotate the long pusher in place at a far-reach
-                    // contact posture. Lift above the entire T, retreat to
-                    // the neutral workspace, and verticalize there.
-                    bool used_neutral_anchor = true;
-                    auto live_receipt =
-                        EvaluateMeasuredCandidateAcquisition(
-                            acquisition_plant, acquisition_context.get(),
-                            params, progress_start_q, progress_start_pose,
-                            candidate, active_release_sample,
-                            used_neutral_anchor);
+                    auto [live_receipt, used_neutral_anchor] =
+                        evaluate_progress_reposition(
+                            progress_start_q, progress_start_pose,
+                            candidate, active_release_sample);
                     bool live_accepted =
                         live_receipt.swept_capsule_clear &&
                         live_receipt.ik_reached;
-                    if (!live_accepted && !used_neutral_anchor) {
-                      live_receipt = EvaluateMeasuredCandidateAcquisition(
-                          acquisition_plant, acquisition_context.get(),
-                          params, progress_start_q, progress_start_pose,
-                          candidate, active_release_sample, true);
-                      used_neutral_anchor = true;
-                      live_accepted = live_receipt.swept_capsule_clear &&
-                          live_receipt.ik_reached;
-                    }
                     std::cout <<
                         "full_sampling_c3plus_progress_live_ik="
                               << (live_accepted ? "PASS" : "FAIL")
@@ -3591,12 +4232,10 @@ int DoMain(int argc, char* argv[]) {
                               << live_receipt.used_home_seed_fallback
                               << std::endl;
                     if (live_accepted) {
-                      if (used_neutral_anchor) {
-                        progress_neutral_anchor_candidates.insert(
-                            candidate.sample_name);
-                      }
                       if (!selected_progress_acquisition.has_value()) {
                         selected_progress_acquisition = live_receipt;
+                        selected_progress_use_neutral_anchor =
+                            used_neutral_anchor;
                       }
                       progress_execution_buffer.successful.push_back(
                           candidate);
@@ -3612,6 +4251,8 @@ int DoMain(int argc, char* argv[]) {
                   }
                 }
                 };
+                prefer_retained_reposition_target(
+                    &progress_buffer.successful);
                 evaluate_progress_candidates(progress_buffer.successful);
                 bool monitored_lateral_fallback = false;
                 auto try_monitored_lateral_fallback = [&]() {
@@ -3643,25 +4284,13 @@ int DoMain(int argc, char* argv[]) {
                       monitored_progress_candidate;
                   for (const auto& candidate :
                        monitored_progress_candidates) {
-                    bool used_neutral_anchor = true;
-                    auto live_receipt =
-                        EvaluateMeasuredCandidateAcquisition(
-                            acquisition_plant, acquisition_context.get(),
-                            params, progress_start_q, progress_start_pose,
-                            candidate, active_release_sample,
-                            used_neutral_anchor);
+                    auto [live_receipt, used_neutral_anchor] =
+                        evaluate_progress_reposition(
+                            progress_start_q, progress_start_pose,
+                            candidate, active_release_sample);
                     bool live_accepted =
                         live_receipt.swept_capsule_clear &&
                         live_receipt.ik_reached;
-                    if (!live_accepted && !used_neutral_anchor) {
-                      live_receipt = EvaluateMeasuredCandidateAcquisition(
-                          acquisition_plant, acquisition_context.get(),
-                          params, progress_start_q, progress_start_pose,
-                          candidate, active_release_sample, true);
-                      used_neutral_anchor = true;
-                      live_accepted = live_receipt.swept_capsule_clear &&
-                          live_receipt.ik_reached;
-                    }
                     std::cout <<
                         "full_sampling_c3plus_progress_live_ik="
                               << (live_accepted ? "PASS" : "FAIL")
@@ -3685,11 +4314,9 @@ int DoMain(int argc, char* argv[]) {
                               << live_receipt.used_home_seed_fallback
                               << std::endl;
                     if (live_accepted) {
-                      if (used_neutral_anchor) {
-                        progress_neutral_anchor_candidates.insert(
-                            candidate.sample_name);
-                      }
                       selected_progress_acquisition = live_receipt;
+                      selected_progress_use_neutral_anchor =
+                          used_neutral_anchor;
                       monitored_progress_candidate = candidate;
                       monitored_progress_lateral = std::abs(
                           candidate.solve
@@ -3758,6 +4385,8 @@ int DoMain(int argc, char* argv[]) {
                     selected_progress_acquisition.reset();
                     monitored_progress_lateral =
                         std::numeric_limits<double>::infinity();
+                    prefer_retained_reposition_target(
+                        &replenished.successful);
                     evaluate_progress_candidates(replenished.successful);
                     try_monitored_lateral_fallback();
                     progress_buffer = std::move(replenished);
@@ -3824,6 +4453,8 @@ int DoMain(int argc, char* argv[]) {
                   selected_progress_acquisition.reset();
                   monitored_progress_lateral =
                       std::numeric_limits<double>::infinity();
+                  prefer_retained_reposition_target(
+                      &component_buffer.successful);
                   evaluate_progress_candidates(
                       component_buffer.successful);
                   try_monitored_lateral_fallback();
@@ -3856,6 +4487,15 @@ int DoMain(int argc, char* argv[]) {
                     BuildXarmFullSamplingC3TaskSpacePlan(
                         progress_execution_buffer,
                         params.task.planning_time_step);
+                bool progress_predicted_prefix_owner = false;
+                if (!progress_execution_buffer.successful.empty()) {
+                  progress_predicted_prefix_owner =
+                      EvaluateXarmFullSamplingC3PredictedContactPrefix(
+                          progress_execution_buffer.successful.front(),
+                          params.controller.pusher_radius,
+                          params.controller.contact_activation_tolerance)
+                          .accepted;
+                }
                 XarmFullSamplingC3ResponseConditioningReceipt
                     selected_response_conditioning;
                 if (!progress_execution_buffer.successful.empty()) {
@@ -3888,6 +4528,8 @@ int DoMain(int argc, char* argv[]) {
                                  .corrected_lateral_error
                           << " contact_feasible_replenishment="
                           << contact_feasible_replenishment
+                          << " predicted_prefix_owner="
+                          << progress_predicted_prefix_owner
                           << " sample=" << progress_plan.sample_name
                           << " sample_height_O="
                           << progress_plan.sample_height_O
@@ -3914,6 +4556,9 @@ int DoMain(int argc, char* argv[]) {
                           << " pusher_knots_W="
                           << progress_plan.pusher_positions_W << std::endl;
                 if (progress_plan.accepted) {
+                  retained_reposition_target_name =
+                      progress_plan.sample_name;
+                  retained_reposition_target_cost = progress_plan.cost;
                   if (!selected_progress_acquisition.has_value()) {
                     std::cout <<
                         "full_sampling_c3plus_measured_cycle_budget=FAIL"
@@ -3924,18 +4569,117 @@ int DoMain(int argc, char* argv[]) {
                     corrective_lateral_recovery = false;
                     break;
                   }
+                  // Candidate generation and live-IK arbitration can take
+                  // several wall-clock seconds while Drake and OSC continue.
+                  // Refresh once more at the execution boundary and rerun the
+                  // selected acquisition from that exact measured posture.
+                  refresh_full_measurements(
+                      "progress_execution_handoff");
+                  read_full_tip();
+                  if (!wait_for_tip_quiescence(
+                          "progress_execution_handoff_settle")) {
+                    corrective_lateral_recovery = false;
+                    break;
+                  }
+                  const Eigen::Vector3d execution_handoff_tip =
+                      read_full_tip();
+                  const Eigen::VectorXd execution_handoff_q =
+                      acquisition_plant.GetPositions(*acquisition_context);
+                  const Eigen::Vector3d execution_handoff_object_pose =
+                      read_full_object_pose();
+                  auto [execution_handoff_acquisition,
+                        execution_use_neutral_anchor] =
+                      evaluate_progress_reposition(
+                          execution_handoff_q,
+                          execution_handoff_object_pose,
+                          progress_execution_buffer.successful.front(),
+                          active_release_sample);
+                  const auto planning_handoff =
+                      EvaluateFullSamplingC3PlanningHandoff(
+                          progress_start_pose,
+                          execution_handoff_object_pose,
+                          execution_handoff_acquisition.swept_capsule_clear,
+                          execution_handoff_acquisition.ik_reached,
+                          params.controller
+                              .successor_minimum_translation_progress,
+                          params.controller.successor_minimum_yaw_progress);
+                  refresh_full_measurements(
+                      "progress_execution_handoff_validate");
+                  const Eigen::Vector3d validated_handoff_tip =
+                      read_full_tip();
+                  const double handoff_tip_drift =
+                      (validated_handoff_tip - execution_handoff_tip).norm();
+                  const bool handoff_tip_conformant =
+                      IsFullSamplingC3WaypointExecutionConformant(
+                          0.0, handoff_tip_drift,
+                          params.controller.contact_activation_tolerance);
+                  std::cout <<
+                      "full_sampling_c3plus_planning_handoff="
+                            << (planning_handoff.accepted &&
+                                handoff_tip_conformant ? "PASS" :
+                                "RETRY")
+                            << " sample=" << progress_plan.sample_name
+                            << " object_translation_drift_m="
+                            << planning_handoff.object_translation_drift
+                            << " object_orientation_drift_rad="
+                            << planning_handoff.object_orientation_drift
+                            << " object_translation_conformant="
+                            << planning_handoff
+                                   .object_translation_conformant
+                            << " object_orientation_conformant="
+                            << planning_handoff
+                                   .object_orientation_conformant
+                            << " swept_capsule_clear="
+                            << execution_handoff_acquisition
+                                   .swept_capsule_clear
+                            << " ik_reached="
+                            << execution_handoff_acquisition.ik_reached
+                            << " ik_steps="
+                            << execution_handoff_acquisition.ik_steps
+                            << " neutral_anchor="
+                            << execution_use_neutral_anchor
+                            << " tip_drift_m=" << handoff_tip_drift
+                            << " tip_conformant="
+                            << handoff_tip_conformant
+                            << " updates=" << full_execution_updates
+                            << std::endl;
+                  if (!planning_handoff.accepted ||
+                      !handoff_tip_conformant) {
+                    if (!planning_handoff.acquisition_conformant) {
+                      live_execution_rejections.insert(
+                          progress_plan.sample_name);
+                      invalidate_retained_reposition_target(
+                          progress_plan.sample_name);
+                    }
+                    bounded_corridor_handoff_pending =
+                        std::abs(execution_handoff_object_pose.x() -
+                                 params.object.goal_pose.x()) <=
+                        params.controller.lateral_drift_tolerance;
+                    corrective_lateral_recovery = true;
+                    continue;
+                  }
+                  selected_progress_acquisition =
+                      execution_handoff_acquisition;
+                  selected_progress_use_neutral_anchor =
+                      execution_use_neutral_anchor;
                   const auto measured_cycle_budget =
-                      EvaluateFullSamplingC3CycleBudget(
+                      EvaluateFullSamplingC3MeasuredContactPhaseCycleBudget(
                           full_execution_updates,
                           FLAGS_full_execution_steps,
                           selected_progress_acquisition->ik_steps,
                           params.task.planning_time_step,
                           FLAGS_full_execution_period_ms,
                           params.controller.successor_minimum_contact_steps,
-                          measured_release_recovery_updates);
+                          measured_contact_phase_updates,
+                          measured_release_recovery_updates,
+                          measured_acquisition_updates);
+                  const bool exact_budget_override =
+                      !measured_cycle_budget.accepted &&
+                      FLAGS_exact_execution_budget;
                   std::cout <<
                       "full_sampling_c3plus_measured_cycle_budget="
                             << (measured_cycle_budget.accepted ? "PASS" :
+                                exact_budget_override ? "EXACT_OVERRIDE" :
                                 "DEFER")
                             << " sample=" << progress_plan.sample_name
                             << " updates=" << full_execution_updates
@@ -3953,12 +4697,27 @@ int DoMain(int argc, char* argv[]) {
                             << " measured_receipts="
                             << measured_cycle_budget
                                    .measured_release_recovery_receipts
+                            << " measured_dwell_receipts="
+                            << measured_contact_phase_updates.size()
                             << " required_updates="
                             << measured_cycle_budget.required_updates
                             << std::endl;
-                  if (!measured_cycle_budget.accepted) {
+                  if (!measured_cycle_budget.accepted &&
+                      !exact_budget_override) {
                     contact_cycle_budget_deferred = true;
                     break;
+                  }
+                  if (exact_budget_override) {
+                    std::cout <<
+                        "full_sampling_c3plus_exact_execution_budget=ACTIVE"
+                        << " updates=" << full_execution_updates
+                        << " budget=" << FLAGS_full_execution_steps
+                        << " remaining_updates="
+                        << measured_cycle_budget.remaining_updates
+                        << " transaction_required_updates="
+                        << measured_cycle_budget.required_updates
+                        << " partial_terminal_cycle_allowed=1"
+                        << std::endl;
                   }
                   ContactFace progress_face = ContactFace::kCrossbarTop;
                   if (progress_plan.sample_name.find("stem_right") !=
@@ -3994,7 +4753,16 @@ int DoMain(int argc, char* argv[]) {
                   progress_high.z() =
                       params.controller.reposition_waypoint_height;
                   const bool use_progress_neutral_anchor =
-                      true;
+                      selected_progress_use_neutral_anchor.value_or(true);
+                  std::cout <<
+                      "full_sampling_c3plus_progress_reposition_mode=PASS"
+                            << " mode="
+                            << (use_progress_neutral_anchor
+                                    ? "neutral_anchor"
+                                    : "local_capsule_certified")
+                            << " sample=" << progress_plan.sample_name
+                            << " updates=" << full_execution_updates
+                            << std::endl;
                   Eigen::Vector3d progress_lift = read_full_tip();
                   progress_lift.z() = std::max(
                       progress_lift.z(),
@@ -4005,12 +4773,23 @@ int DoMain(int argc, char* argv[]) {
                   progress_anchor.z() = progress_lift.z();
                   Eigen::Vector3d progress_overhead = progress_high;
                   progress_overhead.z() = progress_lift.z();
+                  const int progress_acquisition_start_updates =
+                      full_execution_updates;
                   const bool progress_lifted = execute_posture_waypoint(
                       progress_lift, progress_start_pose,
                       active_release_sample,
                       "progress_lift", true, false, false, false, true,
                       true);
-                  const bool progress_anchored = progress_lifted &&
+                  const bool progress_local_lift_recentered =
+                      progress_lifted &&
+                      (use_progress_neutral_anchor ||
+                       execute_posture_waypoint(
+                           progress_lift, progress_start_pose,
+                           active_release_sample,
+                           "progress_local_lift_recenter", true, false,
+                           false, false, false, true));
+                  const bool progress_anchored =
+                      progress_local_lift_recentered &&
                       (!use_progress_neutral_anchor ||
                        execute_posture_waypoint(
                            progress_anchor, progress_start_pose,
@@ -4026,19 +4805,24 @@ int DoMain(int argc, char* argv[]) {
                           progress_start_pose, progress_sample,
                           "progress_verticalize", false, false, false,
                           false, false, false);
-                  const bool progress_traversed = progress_verticalized &&
+                  const bool progress_verticalization_settled =
+                      progress_verticalized && wait_for_tip_quiescence(
+                          "progress_verticalize_transition");
+                  const bool progress_traversed =
+                      progress_verticalization_settled &&
                       execute_posture_waypoint(
-                          use_progress_neutral_anchor ? progress_overhead :
-                              progress_high,
+                          progress_overhead,
                           progress_start_pose, progress_sample,
                           "progress_traverse", false, false, false, false,
                           false, true);
                   const bool progress_lowered = progress_traversed &&
-                      (!use_progress_neutral_anchor ||
-                       execute_posture_waypoint(
-                           progress_high, progress_start_pose,
-                           progress_sample, "progress_lower", false,
-                           false, false, false, false, true));
+                      execute_posture_waypoint(
+                          progress_high, progress_start_pose,
+                          progress_sample,
+                          use_progress_neutral_anchor
+                              ? "progress_lower"
+                              : "progress_local_lower",
+                          false, false, false, false, false, true);
                   const bool progress_descended = progress_lowered &&
                       execute_posture_waypoint(
                           progress_standoff, progress_start_pose,
@@ -4048,7 +4832,8 @@ int DoMain(int argc, char* argv[]) {
                       execute_posture_waypoint(
                           progress_contact, progress_start_pose,
                           progress_sample, "progress_contact", false, false,
-                          false, true, false, true);
+                          false, true, false, true, false,
+                          progress_plan.pusher_forces_W.col(0));
                   const int completed_acquisition_phases =
                       static_cast<int>(progress_lifted) +
                       static_cast<int>(progress_anchored) +
@@ -4058,12 +4843,26 @@ int DoMain(int argc, char* argv[]) {
                       static_cast<int>(progress_descended) +
                       static_cast<int>(progress_contact_reached);
                   if (progress_contact_reached) {
+                    const int measured_progress_acquisition =
+                        full_execution_updates -
+                        progress_acquisition_start_updates;
+                    if (measured_progress_acquisition > 0) {
+                      measured_acquisition_updates.push_back(
+                          measured_progress_acquisition);
+                      std::cout <<
+                          "full_sampling_c3plus_acquisition_receipt=PASS"
+                                << " phase=progress_cycle phase_updates="
+                                << measured_progress_acquisition
+                                << " receipts="
+                                << measured_acquisition_updates.size()
+                                << std::endl;
+                    }
                     const auto conformance =
                         EvaluateFullSamplingC3AcquisitionConformance(
                             true, 7, completed_acquisition_phases, false,
                             false, true);
-                    std::cout <<
-                        "full_sampling_c3plus_acquisition_conformance=PASS"
+                      std::cout <<
+                          "full_sampling_c3plus_acquisition_conformance=PASS"
                               << " sample=" << progress_plan.sample_name
                               << " completed_phases="
                               << conformance.completed_phases
@@ -4073,6 +4872,8 @@ int DoMain(int argc, char* argv[]) {
                               << conformance.physical_acquisition_completed
                               << " recovery_required="
                               << conformance.recovery_required
+                              << " local_lift_recentered="
+                              << progress_local_lift_recentered
                               << " replanning_allowed="
                               << conformance.replanning_allowed
                               << " updates=" << full_execution_updates
@@ -4126,10 +4927,13 @@ int DoMain(int argc, char* argv[]) {
                     }
                     live_execution_rejections.insert(
                         progress_plan.sample_name);
+                    invalidate_retained_reposition_target(
+                        progress_plan.sample_name);
                     bool neutral_anchor_reacquired = false;
                     bool reachable_anchor_fallback = false;
                     bool overhead_anchor_fallback = false;
                     bool clearance_height_fallback = false;
+                    bool neutral_retreat_fallback = false;
                     if (progress_fallback_released &&
                         full_execution_updates <
                             FLAGS_full_execution_steps) {
@@ -4143,14 +4947,14 @@ int DoMain(int argc, char* argv[]) {
                               progress_sample,
                               "progress_preview_recovery_lift", true,
                               false, false, false, true, true);
-                      Eigen::Vector3d recovery_anchor =
-                          acquisition_home_tip;
-                      recovery_anchor.z() = recovery_lift.z();
+                      const Eigen::Vector3d recovery_anchor =
+                          read_full_tip();
                       neutral_anchor_reacquired = recovery_lifted &&
                           execute_posture_waypoint(
                               recovery_anchor, read_full_object_pose(),
                               progress_sample,
-                              "progress_preview_recovery_verticalize_anchor",
+                              "progress_preview_recovery_current_capsule_"
+                              "clear_anchor",
                               false, false, false, false, false, false);
                       if (recovery_lifted && !neutral_anchor_reacquired) {
                         // A large object-yaw transition can leave the fixed
@@ -4219,6 +5023,35 @@ int DoMain(int argc, char* argv[]) {
                         neutral_anchor_reacquired =
                             clearance_height_fallback;
                       }
+                      if (recovery_lifted &&
+                          !neutral_anchor_reacquired) {
+                        // Every in-place verticalization above can be
+                        // infeasible at the outer reach envelope (vertical
+                        // IK has no solution near 0.72 m planar radius).
+                        // Retreat position-only to the acquisition home
+                        // anchor, where the initial acquisition
+                        // verticalizes every run by construction, then
+                        // verticalize there.
+                        Eigen::Vector3d neutral_retreat =
+                            acquisition_home_tip;
+                        neutral_retreat.z() = recovery_lift.z();
+                        const bool neutral_retreat_reached =
+                            execute_posture_waypoint(
+                                neutral_retreat,
+                                read_full_object_pose(), progress_sample,
+                                "progress_preview_recovery_neutral_retreat",
+                                true, false, false, false, false, false);
+                        neutral_retreat_fallback =
+                            neutral_retreat_reached &&
+                            execute_posture_waypoint(
+                                read_full_tip(), read_full_object_pose(),
+                                progress_sample,
+                                "progress_preview_recovery_neutral_"
+                                "verticalize_anchor",
+                                false, false, false, false, false, false);
+                        neutral_anchor_reacquired =
+                            neutral_retreat_fallback;
+                      }
                     }
                     const bool terminal_receipt_preserved =
                         measured_response_history.size() ==
@@ -4257,6 +5090,8 @@ int DoMain(int argc, char* argv[]) {
                               << overhead_anchor_fallback
                               << " clearance_height_fallback="
                               << clearance_height_fallback
+                              << " neutral_retreat_fallback="
+                              << neutral_retreat_fallback
                               << " terminal_receipt_preserved="
                               << conformance.terminal_receipt_preserved
                               << " replanning_allowed="
@@ -4264,6 +5099,25 @@ int DoMain(int argc, char* argv[]) {
                               << " updates=" << full_execution_updates
                               << std::endl;
                     if (conformance.replanning_allowed) {
+                      // The candidate failed before contact and the recovery
+                      // path restored a verified neutral anchor. Preserve an
+                      // already-admitted bounded-corridor handoff; otherwise
+                      // the retry discards the prior component receipt even
+                      // though no new object response occurred.
+                      bounded_corridor_handoff_pending =
+                          bounded_handoff_admitted &&
+                          std::abs(read_full_object_x() -
+                                   params.object.goal_pose.x()) <=
+                              params.controller.lateral_drift_tolerance;
+                      std::cout <<
+                          "full_sampling_c3plus_acquisition_retry_handoff="
+                                << (bounded_corridor_handoff_pending
+                                        ? "PRESERVED"
+                                        : "STRICT")
+                                << " prior_bounded_handoff="
+                                << bounded_handoff_admitted
+                                << " updates=" << full_execution_updates
+                                << std::endl;
                       corrective_lateral_recovery = true;
                       continue;
                     }
@@ -4275,7 +5129,19 @@ int DoMain(int argc, char* argv[]) {
                   bool progress_terminal_regression = false;
                   bool progress_upright_rejected = false;
                   bool physical_upright_rejected = false;
+                  bool progress_contact_lost = false;
+                  XarmFullSamplingC3ContactDwellReceipt
+                      progress_contact_dwell_receipt;
+                  XarmFullSamplingC3MeasuredResponseCompletionReceipt
+                      progress_response_completion;
                   int progress_contact_dwell = 0;
+                  int progress_unjoined_dwell_streak = 0;
+                  Eigen::Vector3d previous_dwell_pose =
+                      read_full_object_pose();
+                  const int response_completion_persistence_updates =
+                      std::max(1, static_cast<int>(std::ceil(
+                          1000.0 * params.task.planning_time_step /
+                          FLAGS_full_execution_period_ms)));
                   while (progress_contact_reached &&
                          progress_contact_dwell <
                              params.controller.successor_progress_window_steps &&
@@ -4291,25 +5157,67 @@ int DoMain(int argc, char* argv[]) {
                       }
                     }
                     ++full_execution_updates;
-                    ++progress_contact_dwell;
                     const Eigen::Vector3d dwell_pose =
                         read_full_object_pose();
+                    progress_contact_dwell_receipt =
+                        EvaluateFullSamplingC3ContactDwellContinuation(
+                            progress_contact, read_full_tip(), dwell_pose,
+                            progress_sample.point, progress_sample.normal,
+                            params.controller.pusher_radius,
+                            params.controller.contact_activation_tolerance);
+                    const auto progress_physical_join =
+                        evaluate_physical_dwell_join(
+                            progress_sample.point, progress_sample.normal);
+                    const bool progress_physically_present =
+                        progress_physical_join.receipt_fresh &&
+                        progress_physical_join.contact_active &&
+                        progress_physical_join.face_identity;
+                    progress_unjoined_dwell_streak =
+                        (progress_contact_dwell_receipt
+                             .contact_continuation &&
+                         !progress_physically_present)
+                            ? progress_unjoined_dwell_streak + 1 : 0;
+                    if (progress_contact_dwell_receipt.contact_continuation &&
+                        progress_physical_join.accepted) {
+                      ++progress_contact_dwell;
+                    }
+                    progress_contact_lost =
+                        !progress_contact_dwell_receipt
+                             .contact_continuation ||
+                        progress_unjoined_dwell_streak >=
+                            kPhysicalDwellLossDebounceSteps;
+                    log_contact_transaction(
+                        "progress_dwell", progress_plan.sample_name,
+                        progress_plan.sample_point_O,
+                        progress_plan.sample_normal_O,
+                        progress_predicted_prefix_owner,
+                        progress_contact_dwell_receipt.contact_gap_accepted,
+                        progress_contact_dwell_receipt.contact_continuation,
+                        progress_contact_dwell,
+                        progress_contact_dwell_receipt.signed_contact_gap,
+                        progress_contact_dwell_receipt.tip_hold_error,
+                        &progress_physical_join);
                     const auto dwell_spatial_pose =
                         read_full_object_spatial_pose();
-                    progress_upright_rejected =
-                        !IsXarmFullSamplingC3ObjectUpright(
+                    const bool dwell_object_upright =
+                        IsXarmFullSamplingC3ObjectUpright(
                             dwell_spatial_pose.first,
                             dwell_spatial_pose.second,
                             params.object.resting_height,
                             params.controller.contact_activation_tolerance,
                             params.task.orientation_tolerance);
+                    progress_upright_rejected = !dwell_object_upright;
                     physical_upright_rejected =
                         physical_upright_rejected ||
                         progress_upright_rejected;
                     progress_lateral_rejected =
-                        std::abs(dwell_pose.x() -
-                                 params.object.goal_pose.x()) >
-                        params.controller.lateral_drift_tolerance;
+                        IsFullSamplingC3ContactLateralRejected(
+                            dwell_pose.x(), params.object.goal_pose.x(),
+                            cycle_entry_lateral_drift,
+                            progress_lateral_reserve_limit,
+                            params.controller.lateral_drift_tolerance,
+                            params.controller.contact_activation_tolerance,
+                            bounded_contact_recovery_mode);
                     const auto dwell_terminal_descent =
                         EvaluateFullSamplingC3TerminalDescent(
                             progress_start_pose, dwell_pose,
@@ -4318,21 +5226,53 @@ int DoMain(int argc, char* argv[]) {
                                 .successor_minimum_translation_progress,
                             params.controller
                                 .successor_minimum_yaw_progress);
+                    progress_response_completion =
+                        EvaluateFullSamplingC3MeasuredResponseCompletion(
+                            progress_start_pose, previous_dwell_pose,
+                            dwell_pose, params.object.goal_pose,
+                            progress_contact_dwell_receipt
+                                .contact_continuation,
+                            dwell_object_upright,
+                            progress_response_completion
+                                .consecutive_bounded_updates,
+                            response_completion_persistence_updates,
+                            params.controller
+                                .successor_minimum_translation_progress,
+                            params.controller
+                                .successor_minimum_yaw_progress,
+                            progress_lateral_reserve_limit);
+                    previous_dwell_pose = dwell_pose;
                     progress_contact_productive =
-                        progress_contact_dwell >=
-                            params.controller.successor_minimum_contact_steps &&
-                        dwell_terminal_descent.accepted;
+                        progress_response_completion.completed ||
+                        (progress_contact_dwell >=
+                             params.controller
+                                 .physical_contact_dwell_steps &&
+                         dwell_terminal_descent.accepted);
                     progress_terminal_regression =
                         progress_contact_dwell >=
-                            params.controller.successor_minimum_contact_steps &&
+                            params.controller.physical_contact_dwell_steps &&
                         (!dwell_terminal_descent.translation_nonregressive ||
                          !dwell_terminal_descent.orientation_nonregressive);
                     if (progress_lateral_rejected ||
                         progress_upright_rejected ||
+                        progress_contact_lost ||
                         progress_contact_productive ||
                         progress_terminal_regression) {
                       break;
                     }
+                  }
+                  const bool measured_contact_phase_recorded =
+                      ShouldRecordFullSamplingC3MeasuredContactPhase(
+                          progress_contact_dwell,
+                          progress_contact_reached,
+                          progress_response_completion.completed,
+                          progress_lateral_rejected,
+                          progress_terminal_regression,
+                          progress_upright_rejected,
+                          progress_contact_lost);
+                  if (measured_contact_phase_recorded) {
+                    measured_contact_phase_updates.push_back(
+                        progress_contact_dwell);
                   }
                   std::cout <<
                       "full_sampling_c3plus_progress_contact_dwell="
@@ -4345,6 +5285,31 @@ int DoMain(int argc, char* argv[]) {
                             << progress_terminal_regression
                             << " upright_rejected="
                             << progress_upright_rejected
+                            << " contact_lost=" << progress_contact_lost
+                            << " measured_response_complete="
+                            << progress_response_completion.completed
+                            << " measured_phase_recorded="
+                            << measured_contact_phase_recorded
+                            << " contact_engaged="
+                            << progress_contact_reached
+                            << " bounded_contact_recovery="
+                            << bounded_contact_recovery_mode
+                            << " response_persistence="
+                            << progress_response_completion
+                                   .consecutive_bounded_updates
+                            << "/"
+                            << response_completion_persistence_updates
+                            << " incremental_translation_m="
+                            << progress_response_completion
+                                   .incremental_translation
+                            << " incremental_orientation_rad="
+                            << progress_response_completion
+                                   .incremental_orientation
+                            << " tip_hold_error_m="
+                            << progress_contact_dwell_receipt.tip_hold_error
+                            << " contact_gap_m="
+                            << progress_contact_dwell_receipt
+                                   .signed_contact_gap
                             << " updates=" << full_execution_updates
                             << std::endl;
                   auto execute_task_waypoint = [&](const Eigen::Vector3d& goal,
@@ -4352,11 +5317,17 @@ int DoMain(int argc, char* argv[]) {
                     const bool reached = execute_posture_waypoint(
                         goal, read_full_object_pose(), progress_sample,
                         "progress_knot_" + std::to_string(knot), false,
-                        false, true);
+                        false, true, false, false, false, false,
+                        progress_plan.pusher_forces_W.col(knot));
                     progress_lateral_rejected =
-                        std::abs(read_full_object_x() -
-                                 params.object.goal_pose.x()) >
-                        params.controller.lateral_drift_tolerance;
+                        IsFullSamplingC3ContactLateralRejected(
+                            read_full_object_x(),
+                            params.object.goal_pose.x(),
+                            cycle_entry_lateral_drift,
+                            progress_lateral_reserve_limit,
+                            params.controller.lateral_drift_tolerance,
+                            params.controller.contact_activation_tolerance,
+                            bounded_contact_recovery_mode);
                     if (progress_lateral_rejected) {
                       std::cout <<
                           "full_sampling_c3plus_progress_lateral="
@@ -4376,6 +5347,7 @@ int DoMain(int argc, char* argv[]) {
                   bool execute_progress_tail = progress_contact_reached &&
                       !progress_contact_productive &&
                       !progress_terminal_regression &&
+                      !progress_contact_lost &&
                       !progress_lateral_rejected &&
                       full_execution_updates < FLAGS_full_execution_steps;
                   for (int knot = 1;
@@ -4395,8 +5367,11 @@ int DoMain(int argc, char* argv[]) {
                           selected_cycle_recovery_prediction;
                   std::optional<XarmFullSamplingC3MeasuredResponse>
                       selected_cycle_recovery_observation;
+                  bool recovery_release_reference_active = false;
                   if (progress_lateral_rejected) {
                     live_execution_rejections.insert(
+                        progress_plan.sample_name);
+                    invalidate_retained_reposition_target(
                         progress_plan.sample_name);
                     std::cout <<
                         "full_sampling_c3plus_progress_response_"
@@ -4464,19 +5439,25 @@ int DoMain(int argc, char* argv[]) {
                       progress_lateral_reserve_limit;
                   const bool terminal_response_observed =
                       progress_contact_reached &&
-                      progress_contact_dwell >=
-                          params.controller.successor_minimum_contact_steps;
+                      (progress_response_completion.completed ||
+                       progress_contact_dwell >=
+                           params.controller
+                               .physical_contact_dwell_steps);
                   const bool terminal_descent_rejected =
-                      progress_upright_rejected ||
+                      progress_upright_rejected || progress_contact_lost ||
                       (terminal_response_observed && !productive_progress &&
                        !progress_lateral_rejected);
                   bool terminal_descent_released = false;
                   if (terminal_descent_rejected) {
                     live_execution_rejections.insert(
                         progress_plan.sample_name);
+                    invalidate_retained_reposition_target(
+                        progress_plan.sample_name);
                     const char* terminal_rejection_reason =
                         progress_upright_rejected
                             ? "object_not_upright"
+                            : progress_contact_lost
+                            ? "measured_contact_loss"
                             : (!measured_terminal_descent
                               .translation_nonregressive ||
                          !measured_terminal_descent
@@ -4555,7 +5536,8 @@ int DoMain(int argc, char* argv[]) {
                               << std::endl;
                   }
                   bool rejected_face_released = false;
-                  bool post_recovery_release_verified = false;
+                  bool post_recovery_release_verified =
+                      terminal_descent_released;
                   if ((productive_progress || progress_lateral_rejected ||
                        terminal_descent_rejected) &&
                       !progress_recovered &&
@@ -4731,22 +5713,19 @@ int DoMain(int argc, char* argv[]) {
                                   : entry.object_pose;
                           const auto recovery =
                               EvaluateXarmFullSamplingC3LateralRecovery(
-                              progress_start_pose, cycle_planning_pose,
+                              cycle_planning_pose, cycle_planning_pose,
                               ranked_terminal, params.object.goal_pose,
                               params.task.translation_tolerance,
                               params.task.orientation_tolerance,
                               params.controller.lateral_drift_tolerance);
-                          const auto transaction =
-                              EvaluateXarmFullSamplingC3ComponentTransaction(
-                                  progress_start_pose, ranked_terminal,
+                          const auto admission =
+                              EvaluateFullSamplingC3RecoveryCandidateAdmission(
+                                  cycle_planning_pose, ranked_terminal,
                                   params.object.goal_pose,
                                   params.task.translation_tolerance,
-                                  params.task.orientation_tolerance,
-                                  params.controller
-                                      .successor_minimum_translation_progress,
-                                  params.controller
-                                      .successor_minimum_yaw_progress);
-                          return recovery.accepted && transaction.accepted;
+                                  params.task.orientation_tolerance);
+                          return recovery.accepted &&
+                              admission.accepted;
                         };
                     auto cycle_task_descent_magnitude =
                         [&](const auto& candidate) {
@@ -4758,52 +5737,65 @@ int DoMain(int argc, char* argv[]) {
                           if (!entry.accepted) {
                             return -std::numeric_limits<double>::infinity();
                           }
+                          const auto conditioning =
+                              condition_cycle_candidate(candidate);
                           const Eigen::Vector3d& ranked_terminal =
-                              condition_cycle_candidate(candidate)
-                                          .ranking_class == 0
-                                  ? condition_cycle_candidate(candidate)
-                                        .corrected_terminal_object_pose
+                              conditioning.ranking_class == 0
+                                  ? conditioning.corrected_terminal_object_pose
                                   : entry.object_pose;
                           const auto recovery =
                               EvaluateXarmFullSamplingC3LateralRecovery(
-                                  progress_start_pose, cycle_planning_pose,
+                                  cycle_planning_pose, cycle_planning_pose,
                                   ranked_terminal,
                                   params.object.goal_pose,
                                   params.task.translation_tolerance,
                                   params.task.orientation_tolerance,
                                   params.controller.lateral_drift_tolerance);
-                          const auto transaction =
-                              EvaluateXarmFullSamplingC3ComponentTransaction(
-                                  progress_start_pose, ranked_terminal,
+                          const auto admission =
+                              EvaluateFullSamplingC3RecoveryCandidateAdmission(
+                                  cycle_planning_pose, ranked_terminal,
                                   params.object.goal_pose,
                                   params.task.translation_tolerance,
-                                  params.task.orientation_tolerance,
-                                  params.controller
-                                      .successor_minimum_translation_progress,
-                                  params.controller
-                                      .successor_minimum_yaw_progress);
-                          return recovery.accepted && transaction.accepted
-                              ? transaction.normalized_magnitude
+                                  params.task.orientation_tolerance);
+                          const auto normalized =
+                              EvaluateFullSamplingC3NormalizedParetoDescent(
+                                  cycle_planning_pose, ranked_terminal,
+                                  params.object.goal_pose,
+                                  params.task.translation_tolerance,
+                                  params.task.orientation_tolerance);
+                          return recovery.accepted &&
+                                  admission.accepted
+                              ? normalized.normalized_magnitude
                               : -std::numeric_limits<double>::infinity();
                         };
+                    bool selected_cycle_use_neutral_anchor = true;
                     auto select_live_cycle_candidate =
                         [&](const std::vector<
                                 const XarmFullSamplingC3CandidateReceipt*>&
                                 ranked,
                             const Eigen::VectorXd& candidate_start_q,
-                            const ContactSample& release_sample) {
+                            const ContactSample& release_sample)
+                        -> const XarmFullSamplingC3CandidateReceipt* {
+                          int silent_quarantined = 0;
+                          int silent_central_side = 0;
+                          int silent_polarity = 0;
                           for (const auto* candidate : ranked) {
                             if (cycle_execution_rejections.contains(
                                     candidate->sample_name)) {
+                              ++silent_quarantined;
                               continue;
                             }
                             if (!IsFullSamplingC3CentralSideContact(
                                     candidate->sample_height_O,
                                     params.object.resting_height,
                                     params.controller.pusher_radius)) {
+                              ++silent_central_side;
                               continue;
                             }
-                            if (!has_cycle_polarity(*candidate)) continue;
+                            if (!has_cycle_polarity(*candidate)) {
+                              ++silent_polarity;
+                              continue;
+                            }
                             if (!has_cycle_task_nonregression(*candidate)) {
                               const auto entry =
                                   FindXarmFullSamplingC3LateralCorridorEntry(
@@ -4813,34 +5805,30 @@ int DoMain(int argc, char* argv[]) {
                                           .lateral_drift_tolerance);
                               XarmFullSamplingC3LateralRecoveryReceipt
                                   recovery_receipt;
-                              XarmFullSamplingC3ComponentTransactionReceipt
-                                  component_transaction;
+                              XarmFullSamplingC3RecoveryAdmissionReceipt
+                                  admission;
                               if (entry.accepted) {
                                 recovery_receipt =
                                     EvaluateXarmFullSamplingC3LateralRecovery(
-                                        progress_start_pose,
-                                        progress_end_pose,
+                                        cycle_planning_pose,
+                                        cycle_planning_pose,
                                         entry.object_pose,
                                         params.object.goal_pose,
                                         params.task.translation_tolerance,
                                         params.task.orientation_tolerance,
                                         params.controller
                                             .lateral_drift_tolerance);
-                                component_transaction =
-                                    EvaluateXarmFullSamplingC3ComponentTransaction(
-                                        progress_start_pose,
+                                admission =
+                                    EvaluateFullSamplingC3RecoveryCandidateAdmission(
+                                        cycle_planning_pose,
                                         entry.object_pose,
                                         params.object.goal_pose,
                                         params.task.translation_tolerance,
-                                        params.task.orientation_tolerance,
-                                        params.controller
-                                            .successor_minimum_translation_progress,
-                                        params.controller
-                                            .successor_minimum_yaw_progress);
+                                        params.task.orientation_tolerance);
                               }
                               std::cout <<
                                   "full_sampling_c3plus_cycle_recovery_"
-                                  "task_nonregression=REJECT sample="
+                                  "candidate_admission=REJECT sample="
                                         << candidate->sample_name
                                         << " corridor_entry_knot="
                                         << entry.state_knot
@@ -4856,11 +5844,16 @@ int DoMain(int argc, char* argv[]) {
                                                .translation_debt_bounded
                                         << " orientation_debt_rad="
                                         << recovery_receipt.orientation_debt
-                                        << " component_transaction="
-                                        << component_transaction.accepted
-                                        << " component_normalized_magnitude="
-                                        << component_transaction
-                                               .normalized_magnitude
+                                        << " bounded_admission="
+                                        << admission.accepted
+                                        << " incremental_translation_"
+                                           "debt_bounded="
+                                        << admission
+                                               .translation_debt_bounded
+                                        << " incremental_orientation_"
+                                           "debt_bounded="
+                                        << admission
+                                               .orientation_debt_bounded
                                         << std::endl;
                               continue;
                             }
@@ -4884,15 +5877,38 @@ int DoMain(int argc, char* argv[]) {
                                         << std::endl;
                               continue;
                             }
-                            const auto live_receipt =
+                            const auto local_live_receipt =
                                 EvaluateMeasuredCandidateAcquisition(
                                     acquisition_plant,
                                     acquisition_context.get(), params,
                                     candidate_start_q, cycle_live_pose,
-                                    *candidate, release_sample, true);
+                                    *candidate, release_sample, false);
+                            const bool local_live_accepted =
+                                local_live_receipt.swept_capsule_clear &&
+                                local_live_receipt.ik_reached;
+                            FullCandidateAcquisitionReceipt
+                                anchored_live_receipt;
+                            if (!local_live_accepted) {
+                              anchored_live_receipt =
+                                  EvaluateMeasuredCandidateAcquisition(
+                                      acquisition_plant,
+                                      acquisition_context.get(), params,
+                                      candidate_start_q, cycle_live_pose,
+                                      *candidate, release_sample, true);
+                            }
+                            const auto reposition =
+                                EvaluateFullSamplingC3LocalReposition(
+                                    local_live_receipt.swept_capsule_clear,
+                                    local_live_receipt.ik_reached,
+                                    anchored_live_receipt
+                                        .swept_capsule_clear,
+                                    anchored_live_receipt.ik_reached);
+                            const auto& live_receipt =
+                                reposition.local_accepted
+                                    ? local_live_receipt
+                                    : anchored_live_receipt;
                             const bool live_accepted =
-                                live_receipt.swept_capsule_clear &&
-                                live_receipt.ik_reached;
+                                reposition.accepted;
                             std::cout <<
                                 "full_sampling_c3plus_cycle_recovery_live_ik="
                                       << (live_accepted ? "PASS" : "FAIL")
@@ -4916,7 +5932,7 @@ int DoMain(int argc, char* argv[]) {
                                       << live_receipt.failure_clearance
                                              .capsule_table_clear
                                       << " neutral_anchor="
-                                      << true
+                                      << reposition.use_neutral_anchor
                                       << " home_seed_fallback="
                                       << live_receipt
                                              .used_home_seed_fallback
@@ -4932,8 +5948,24 @@ int DoMain(int argc, char* argv[]) {
                                       << response_conditioning
                                              .corrected_terminal_accepted
                                       << std::endl;
-                            if (live_accepted) return candidate;
+                            if (live_accepted) {
+                              selected_cycle_use_neutral_anchor =
+                                  reposition.use_neutral_anchor;
+                              return candidate;
+                            }
                           }
+                          // A silent null hides which filter starved the
+                          // replan; the receipted rejections (admission,
+                          // response class, live IK) already print above.
+                          std::cout <<
+                              "full_sampling_c3plus_cycle_recovery_selector="
+                              "NULL ranked=" << ranked.size()
+                                    << " quarantined=" << silent_quarantined
+                                    << " central_side="
+                                    << silent_central_side
+                                    << " polarity=" << silent_polarity
+                                    << " updates=" << full_execution_updates
+                                    << std::endl;
                           return static_cast<const
                               XarmFullSamplingC3CandidateReceipt*>(nullptr);
                         };
@@ -5166,7 +6198,17 @@ int DoMain(int argc, char* argv[]) {
                       // measured clear posture instead of applying a second
                       // stale-face release displacement.
                       const bool use_cycle_neutral_anchor =
-                          true;
+                          selected_cycle_use_neutral_anchor;
+                      std::cout <<
+                          "full_sampling_c3plus_cycle_reposition_mode=PASS"
+                                << " mode="
+                                << (use_cycle_neutral_anchor
+                                        ? "neutral_anchor"
+                                        : "local_capsule_certified")
+                                << " sample="
+                                << cycle_candidate->sample_name
+                                << " updates=" << full_execution_updates
+                                << std::endl;
                       Eigen::Vector3d cycle_lift = read_full_tip();
                       cycle_lift.z() = std::max(
                           cycle_lift.z(),
@@ -5202,7 +6244,16 @@ int DoMain(int argc, char* argv[]) {
                               cycle_release_sample,
                               "cycle_recovery_lift", true, false, false,
                               false, true);
-                      bool cycle_anchored = cycle_lifted &&
+                      const bool cycle_local_lift_recentered =
+                          cycle_lifted &&
+                          (use_cycle_neutral_anchor ||
+                           execute_posture_waypoint(
+                               cycle_lift, cycle_attempt_pose,
+                               cycle_release_sample,
+                               "cycle_recovery_local_lift_recenter", true,
+                               false, false, false, false, true));
+                      bool cycle_anchored =
+                          cycle_local_lift_recentered &&
                           (!use_cycle_neutral_anchor ||
                            execute_posture_waypoint(
                                cycle_anchor, cycle_attempt_pose,
@@ -5284,6 +6335,8 @@ int DoMain(int argc, char* argv[]) {
                                 << cycle_overhead_anchor_fallback
                                 << " clearance_height="
                                 << cycle_clearance_height_fallback
+                                << " local_lift_recentered="
+                                << cycle_local_lift_recentered
                                 << " updates=" << full_execution_updates
                                 << std::endl;
                       const bool cycle_traversed = cycle_verticalized &&
@@ -5315,7 +6368,7 @@ int DoMain(int argc, char* argv[]) {
                         if (predicted_entry.accepted) {
                           selected_cycle_recovery_prediction =
                               EvaluateFullSamplingC3NormalizedParetoDescent(
-                                  progress_start_pose,
+                                  cycle_attempt_pose,
                                   predicted_entry.object_pose,
                                   params.object.goal_pose,
                                   params.task.translation_tolerance,
@@ -5361,6 +6414,7 @@ int DoMain(int argc, char* argv[]) {
                         bool cycle_crossing_rejected = false;
                         bool cycle_contact_lost_rejected = false;
                         bool cycle_wrong_polarity_rejected = false;
+                        bool cycle_terminal_wrong_polarity_rejected = false;
                         int cycle_recovery_response_steps = 0;
                         const double recovery_start_signed_error =
                             cycle_attempt_pose.x() -
@@ -5396,6 +6450,21 @@ int DoMain(int argc, char* argv[]) {
                                   cycle_recovery_response_steps,
                                   params.controller
                                       .successor_minimum_contact_steps);
+                          const auto measured_terminal_polarity =
+                              EvaluateFullSamplingC3MeasuredRecoveryPolarity(
+                                  cycle_attempt_pose, measured_object,
+                                  params.object.goal_pose,
+                                  params.controller
+                                      .successor_minimum_translation_progress,
+                                  params.controller
+                                      .successor_minimum_yaw_progress);
+                          const bool terminal_wrong_polarity_response =
+                              measured_terminal_polarity.wrong_polarity;
+                          const bool lateral_recovery_satisfied =
+                              std::abs(measured_signed_error) <=
+                                  progress_lateral_reserve_limit &&
+                              measured_terminal_polarity.response_observed &&
+                              !terminal_wrong_polarity_response;
                           const Eigen::Rotation2Dd measured_R_WO(
                               measured_object.z());
                           const Eigen::Vector2d measured_normal_W =
@@ -5419,9 +6488,9 @@ int DoMain(int argc, char* argv[]) {
                               measured_gap >=
                                   params.controller
                                       .contact_activation_tolerance;
-                          if (std::abs(measured_signed_error) <=
-                                  progress_lateral_reserve_limit ||
+                          if (lateral_recovery_satisfied ||
                               crossed_goal || wrong_polarity_response ||
+                              terminal_wrong_polarity_response ||
                               contact_lost || cycle_upright_rejected) {
                             if (crossed_goal) {
                               cycle_crossing_rejected = true;
@@ -5445,6 +6514,29 @@ int DoMain(int argc, char* argv[]) {
                                         << recovery_start_signed_error
                                         << " measured_signed_error_m="
                                         << measured_signed_error
+                                        << " response_steps="
+                                        << cycle_recovery_response_steps
+                                        << " updates="
+                                        << full_execution_updates
+                                        << std::endl;
+                            }
+                            if (terminal_wrong_polarity_response) {
+                              cycle_terminal_wrong_polarity_rejected = true;
+                              std::cout <<
+                                  "full_sampling_c3plus_cycle_recovery_"
+                                  "terminal_wrong_polarity=REJECT"
+                                        << " translation_progress_m="
+                                        << measured_terminal_polarity.terminal
+                                               .translation_progress
+                                        << " orientation_progress_rad="
+                                        << measured_terminal_polarity.terminal
+                                               .orientation_progress
+                                        << " measured_translation_m="
+                                        << measured_terminal_polarity
+                                               .measured_translation
+                                        << " measured_orientation_rad="
+                                        << measured_terminal_polarity
+                                               .measured_orientation
                                         << " response_steps="
                                         << cycle_recovery_response_steps
                                         << " updates="
@@ -5532,6 +6624,8 @@ int DoMain(int argc, char* argv[]) {
                           ++cycle_recovery_response_steps;
                         }
                         progress_recovered = cycle_cleared &&
+                            !cycle_wrong_polarity_rejected &&
+                            !cycle_terminal_wrong_polarity_rejected &&
                             std::abs(read_full_object_x() -
                                      params.object.goal_pose.x()) <=
                                 progress_lateral_reserve_limit;
@@ -5546,6 +6640,14 @@ int DoMain(int argc, char* argv[]) {
                               cycle_candidate->sample_point_O,
                               cycle_candidate->sample_normal_O,
                               active_release_name.c_str(), cycle_face};
+                          recovery_release_reference_active = true;
+                          active_release_contact_pending = false;
+                          std::cout <<
+                              "full_sampling_c3plus_release_reference="
+                              "PASS owner=recovery sample="
+                                    << active_release_name
+                                    << " updates="
+                                    << full_execution_updates << std::endl;
                         }
                         if (cycle_wrong_polarity_rejected) {
                           std::cout <<
@@ -5567,7 +6669,8 @@ int DoMain(int argc, char* argv[]) {
                             ShouldRetryXarmFullSamplingC3RecoveryResponse(
                                 cycle_cleared, progress_recovered,
                                 cycle_crossing_rejected,
-                                cycle_wrong_polarity_rejected,
+                                cycle_wrong_polarity_rejected ||
+                                    cycle_terminal_wrong_polarity_rejected,
                                 cycle_contact_lost_rejected,
                                 cycle_upright_rejected);
                       }
@@ -5803,6 +6906,19 @@ int DoMain(int argc, char* argv[]) {
                           params.controller
                               .successor_minimum_translation_progress,
                           params.controller.successor_minimum_yaw_progress);
+                  const auto incremental_recovery_progress =
+                      EvaluateFullSamplingC3PostRecoveryProgress(
+                          progress_end_pose, post_recovery_pose,
+                          params.object.goal_pose,
+                          params.controller.lateral_drift_tolerance,
+                          params.controller
+                              .successor_minimum_translation_progress,
+                          params.controller.successor_minimum_yaw_progress);
+                  const bool incremental_recovery_required =
+                      selected_cycle_recovery_observation.has_value();
+                  const bool incremental_recovery_accepted =
+                      !incremental_recovery_required ||
+                      incremental_recovery_progress.accepted;
                   const double post_recovery_y_progress =
                       std::abs(progress_start_pose.y() -
                                params.object.goal_pose.y()) -
@@ -5818,7 +6934,7 @@ int DoMain(int argc, char* argv[]) {
                   if (selected_cycle_recovery_prediction.has_value()) {
                     const auto measured_recovery_descent =
                         EvaluateFullSamplingC3NormalizedParetoDescent(
-                            progress_start_pose, post_recovery_pose,
+                            progress_end_pose, post_recovery_pose,
                             params.object.goal_pose,
                             params.task.translation_tolerance,
                             params.task.orientation_tolerance);
@@ -5855,6 +6971,30 @@ int DoMain(int argc, char* argv[]) {
                                      .orientation_progress
                               << std::endl;
                   }
+                  std::cout <<
+                      "full_sampling_c3plus_incremental_recovery_progress="
+                            << (incremental_recovery_accepted ? "PASS" :
+                                "FAIL")
+                            << " required="
+                            << incremental_recovery_required
+                            << " pre_recovery_pose="
+                            << progress_end_pose.transpose()
+                            << " post_recovery_pose="
+                            << post_recovery_pose.transpose()
+                            << " translation_progress_m="
+                            << incremental_recovery_progress.terminal
+                                   .translation_progress
+                            << " orientation_progress_rad="
+                            << incremental_recovery_progress.terminal
+                                   .orientation_progress
+                            << " translation_nonregressive="
+                            << incremental_recovery_progress.terminal
+                                   .translation_nonregressive
+                            << " orientation_nonregressive="
+                            << incremental_recovery_progress.terminal
+                                   .orientation_nonregressive
+                            << " updates=" << full_execution_updates
+                            << std::endl;
                   if (selected_cycle_recovery_observation.has_value()) {
                     selected_cycle_recovery_observation
                         ->measured_terminal_object_pose = post_recovery_pose;
@@ -5879,7 +7019,10 @@ int DoMain(int argc, char* argv[]) {
                               << " lateral_rejected="
                               << selected_cycle_recovery_observation
                                      ->lateral_rejected
-                              << " terminal_accepted="
+                              << " incremental_terminal_accepted="
+                              << incremental_recovery_progress.terminal
+                                     .accepted
+                              << " total_transaction_accepted="
                               << post_recovery_progress.terminal.accepted
                               << std::endl;
                   }
@@ -5923,6 +7066,7 @@ int DoMain(int argc, char* argv[]) {
                   full_task_progress_cycle =
                       !physical_upright_rejected &&
                       post_recovery_progress.accepted &&
+                      incremental_recovery_accepted &&
                       progress_recovered &&
                       (progress_knots_reached ||
                        progress_lateral_rejected);
@@ -5937,7 +7081,8 @@ int DoMain(int argc, char* argv[]) {
                           params.controller.successor_minimum_yaw_progress);
                   const bool recovery_only_continuation =
                       !physical_upright_rejected &&
-                      !post_recovery_progress.accepted &&
+                      (!post_recovery_progress.accepted ||
+                       !incremental_recovery_accepted) &&
                       progress_recovered &&
                       (progress_lateral_rejected ||
                        terminal_descent_released ||
@@ -5950,6 +7095,25 @@ int DoMain(int argc, char* argv[]) {
                           post_recovery_progress.lateral_accepted,
                           bounded_replanning_transaction.accepted,
                           post_recovery_release_verified);
+                  const bool bounded_no_response_continuation =
+                      ShouldContinueXarmFullSamplingC3BoundedNoResponse(
+                          bounded_handoff_admitted,
+                          rejected_face_released ||
+                              post_recovery_release_verified,
+                          !physical_upright_rejected,
+                          post_recovery_progress.terminal
+                              .translation_nonregressive,
+                          post_recovery_progress.terminal
+                              .orientation_nonregressive,
+                          post_recovery_progress.terminal
+                              .translation_progress,
+                          post_recovery_progress.terminal
+                              .orientation_progress,
+                          params.controller
+                              .successor_minimum_translation_progress,
+                          params.controller.successor_minimum_yaw_progress,
+                          post_recovery_progress.lateral_error,
+                          params.controller.lateral_drift_tolerance);
                   std::cout << "full_sampling_c3plus_task_progress_cycle="
                             << (full_task_progress_cycle ? "PASS" : "FAIL")
                             << " y_progress_m="
@@ -6005,12 +7169,23 @@ int DoMain(int argc, char* argv[]) {
                               << std::endl;
                     ++progress_cycle_count;
                     live_execution_rejections.clear();
-                    if (!progress_lateral_rejected) {
+                    if (ShouldReplaceXarmFullSamplingC3ReleaseReferenceWithPrimary(
+                            progress_lateral_rejected,
+                            recovery_release_reference_active)) {
                       active_release_name = progress_plan.sample_name;
                       active_release_sample = ContactSample{
                           progress_plan.sample_point_O,
                           progress_plan.sample_normal_O,
                           active_release_name.c_str(), progress_face};
+                      std::cout <<
+                          "full_sampling_c3plus_release_reference=PASS"
+                          " owner=primary sample="
+                                << active_release_name
+                                << " updates="
+                                << full_execution_updates << std::endl;
+                      active_release_contact_pending = true;
+                    } else {
+                      active_release_contact_pending = false;
                     }
                     corrective_lateral_recovery = progress_recovered;
                     std::cout <<
@@ -6021,22 +7196,34 @@ int DoMain(int argc, char* argv[]) {
                               << " updates=" << full_execution_updates
                               << std::endl;
                   } else if (recovery_only_continuation ||
-                             bounded_corridor_continuation) {
+                             bounded_corridor_continuation ||
+                             bounded_no_response_continuation) {
                     // A wrong-polarity response is not scientific progress,
                     // but once its corrective face has restored the lateral
                     // corridor and cleared contact it is a valid state from
                     // which to re-solve. Do not terminate the receding loop.
                     corrective_lateral_recovery = true;
                     bounded_corridor_handoff_pending =
-                        bounded_corridor_continuation;
-                    if (terminal_descent_released ||
-                        rejected_face_released) {
+                        bounded_corridor_continuation ||
+                        bounded_no_response_continuation;
+                    if ((terminal_descent_released ||
+                         rejected_face_released) &&
+                        ShouldReplaceXarmFullSamplingC3ReleaseReferenceWithPrimary(
+                            progress_lateral_rejected,
+                            recovery_release_reference_active)) {
                       active_release_name = progress_plan.sample_name;
                       active_release_sample = ContactSample{
                           progress_plan.sample_point_O,
                           progress_plan.sample_normal_O,
                           active_release_name.c_str(), progress_face};
+                      std::cout <<
+                          "full_sampling_c3plus_release_reference=PASS"
+                          " owner=primary_recovery_continuation sample="
+                                << active_release_name
+                                << " updates="
+                                << full_execution_updates << std::endl;
                     }
+                    active_release_contact_pending = false;
                     std::cout <<
                         "full_sampling_c3plus_receding_recovery_"
                         "continuation=PASS cycle="
@@ -6045,6 +7232,8 @@ int DoMain(int argc, char* argv[]) {
                               << bounded_replanning_transaction.accepted
                               << " bounded_corridor="
                               << bounded_corridor_continuation
+                              << " bounded_no_response="
+                              << bounded_no_response_continuation
                               << " normalized_magnitude="
                               << bounded_replanning_transaction
                                      .normalized_magnitude
@@ -6083,6 +7272,12 @@ int DoMain(int argc, char* argv[]) {
                 << " subtargets=" << commanded_subtargets
                 << " measured_lateral_rejected="
                 << measured_lateral_rejected
+                << " initial_contact_response_complete="
+                << initial_contact_response_complete
+                << " initial_contact_productive="
+                << initial_contact_productive
+                << " initial_contact_dwell_updates="
+                << initial_contact_dwell_updates
                 << " productive_handoff_preserved="
                 << any_full_task_progress_cycle
                 << " max_initial_error=" << maximum_tracking_error
@@ -6123,6 +7318,8 @@ int DoMain(int argc, char* argv[]) {
       dairlib::lcmt_timestamped_saved_traj hold_message;
       hold_message.utime = full_state_subscriber.message().utime;
       hold_message.saved_traj = hold_trajectory.GenerateLcmObject();
+      hold_message.saved_traj.metadata.description =
+          "terminal_measured_state_hold";
       for (int publish = 0; publish < FLAGS_publish_count; ++publish) {
         drake::lcm::Publish(&full_lcm,
                             params.lcm.tracking_trajectory_channel,
@@ -6134,6 +7331,45 @@ int DoMain(int argc, char* argv[]) {
       std::cout << "full_sampling_c3plus_terminal_hold=PASS tip_W="
                 << hold_tip.transpose() << " q=" << hold_q.transpose()
                 << std::endl;
+      if (FLAGS_exact_execution_budget &&
+          full_execution_updates < FLAGS_full_execution_steps) {
+        const int hold_start_updates = full_execution_updates;
+        while (full_execution_updates < FLAGS_full_execution_steps) {
+          const int64_t target_utime =
+              full_state_subscriber.message().utime +
+              1000LL * FLAGS_full_execution_period_ms;
+          // Match the established measured-phase wait contract above: object
+          // and robot messages share this LCM instance, so a fixed number of
+          // HandleSubscriptions calls cannot prove that robot time advanced.
+          while (full_state_subscriber.message().utime < target_utime) {
+            full_lcm.HandleSubscriptions(100);
+            while (full_lcm.HandleSubscriptions(0) > 0) {
+            }
+          }
+          ++full_execution_updates;
+          if (full_execution_updates == hold_start_updates + 1 ||
+              full_execution_updates % 100 == 0 ||
+              full_execution_updates == FLAGS_full_execution_steps) {
+            std::cout <<
+                "full_sampling_c3plus_exact_budget_terminal_hold=ACTIVE"
+                      << " latest_utime="
+                      << full_state_subscriber.message().utime
+                      << " updates=" << full_execution_updates
+                      << " budget=" << FLAGS_full_execution_steps
+                      << " task_progress_claimed=0"
+                      << std::endl;
+          }
+        }
+        std::cout <<
+            "full_sampling_c3plus_exact_budget_terminal_hold="
+                  << (full_execution_updates == FLAGS_full_execution_steps
+                          ? "PASS" : "FAIL")
+                  << " start_updates=" << hold_start_updates
+                  << " final_updates=" << full_execution_updates
+                  << " budget=" << FLAGS_full_execution_steps
+                  << " task_progress_claimed=0"
+                  << std::endl;
+      }
       const Eigen::Vector3d terminal_pose = read_full_object_pose();
       const auto open_table_terminal =
           EvaluateXarmFullSamplingC3OpenTableTerminal(
@@ -6287,6 +7523,8 @@ int DoMain(int argc, char* argv[]) {
     dairlib::lcmt_timestamped_saved_traj message;
     message.utime = state_subscriber.message().utime;
     message.saved_traj = trajectory.GenerateLcmObject();
+    message.saved_traj.metadata.description =
+        "reduced_task_space_targets";
     for (int i = 0; i < publish_count; ++i) {
       drake::lcm::Publish(&lcm, params.lcm.tracking_trajectory_channel, message);
       lcm.HandleSubscriptions(

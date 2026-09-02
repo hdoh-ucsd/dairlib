@@ -1908,3 +1908,105 @@ Implementation has therefore proceeded through Gate 100, but `open_table` has
 not succeeded. The next research blocker is prevention, not detection, of
 object height loss before corrective contact. The terminal tolerances, seeds,
 controller defaults, solver settings, and YAML remain unchanged.
+
+## Gates 101–125 — recovery-release ownership closure
+
+The next campaign reproduced the unexplained post-recovery push as a stale
+contact-face release, corrected release ownership and incremental recovery
+accounting, and ran a fresh unchanged 8,000-update benchmark. The full gate
+ledger, commands, and physical receipt are recorded in
+[`GATES_101_125_2026-09-01.md`](GATES_101_125_2026-09-01.md).
+
+All 25 implementation gates pass. The stale-face recontact is absent and two
+productive cycles are retained. The strict physical terminal remains FAIL at
+0.749914 m translation and 2.8474 rad wrapped-yaw error.
+
+## Gates 126–140 — measured contact-hold and recovery-polarity prevention
+
+The step-528 replay did not show an actuator, joint, or Jacobian saturation.
+It showed a planner dwell remaining active after physical contact ended, plus
+a later recovery whose x correction hid incremental translation/yaw
+regression. Gates 126–140 add measured contact-continuation and post-primary
+recovery-polarity receipts without changing numerical configuration. The full
+ledger and canonical rollout are recorded in
+[`GATES_126_140_2026-09-01.md`](GATES_126_140_2026-09-01.md).
+
+The fresh physical run ended the primary dwell at 144 updates when measured
+contact separated, rather than waiting for the unchanged 1,000-update window.
+It then rejected a corrective response after 40 updates when measured
+translation progress became −0.155381 mm, cleared contact, and denied
+productive credit. The reported failure mechanism is prevented. The strict
+terminal remains FAIL at 0.772224 m translation and 3.10556 rad wrapped-yaw
+error; the next blocker is post-rejection acquisition continuity.
+
+## Gates 141–240 — execution continuity and productive cycling
+
+This 100-gate campaign closes the stale solve/live-IK/execution handoff,
+requires a measured quiescent handoff, separates bounded prediction debt from
+strict measured response acceptance, and gives current contact geometry
+authority over recovery acquisition. The complete one-by-one ledger and
+physical receipt are recorded in
+[`GATES_141_240_2026-09-01.md`](GATES_141_240_2026-09-01.md).
+
+The exact-source 8,000-update rollout retains four strictly productive cycles.
+It improves translation error from 0.772224 m to 0.732225 m and wrapped-yaw
+error from 3.10556 rad to 2.72413 rad. It then correctly defers because only
+1,506 updates remain while the measured next-cycle reservation is 2,332
+updates. The unchanged 0.05 m translation and 0.10 rad orientation tolerances
+therefore remain a physical FAIL. The next gate is evidence-backed measured
+response completion and cycle-time compression; the configured 1,000-update
+dwell remains unchanged and must not simply be retuned.
+
+## Gates 241–340 — measured cycle compression and local continuation
+
+This 100-gate campaign adds persistent measured response completion, replaces
+the post-cold-start fixed contact reservation with authoritative worst-observed
+phase receipts, prefers live-IK and whole-capsule-certified local repositioning,
+reserves 2 mm of the unchanged lateral corridor for correction, and preserves
+released no-response bounded handoffs without awarding productive credit. The
+complete one-by-one ledger and immutable rollout paths are recorded in
+[`GATES_241_340_2026-09-01.md`](GATES_241_340_2026-09-01.md).
+
+No solver, ADMM, cost, horizon, seed, contact, dynamics, tolerance, terminal
+criterion, or YAML value changed. The exact-source 8,000-update physical
+receipt activated the bounded no-response continuation, retained three strict
+productive cycles, and then correctly rejected a corrective recovery that
+regressed translation and yaw. The terminal remains FAIL at 0.757305 m and
+2.94975 rad. Implementation completion and physical `open_table` acceptance
+remain explicitly separate.
+
+## Gates 341–350 — strict engagement and elevated local acquisition
+
+The step-1000 investigation found two distinct faults: local repositioning
+combined a long traverse with descent, and contact acquisition could pass the
+ordinary waypoint-settle test while the signed face gap was still positive.
+Gates 341–350 make signed-gap engagement authoritative, protect measured phase
+history from non-contact attempts, split elevated traverse from lowering, and
+allow an already admitted bounded corrective contact to restore the primary
+lateral reserve. The complete ledger and immutable rollout receipt are in
+[`GATES_341_350_2026-09-01.md`](GATES_341_350_2026-09-01.md).
+
+The unchanged-config physical run records four elevated local traverse passes,
+four strictly engaged progress contacts, and zero positive-gap contact passes.
+The former one-update bounded-recovery abort instead dwells for 59 updates and
+then rejects measured worsening. `open_table` remains FAIL at 0.763841 m
+translation and 2.8444 rad wrapped-yaw error. The next gate is a
+whole-capsule/live-IK clearance-height neutral-anchor fallback after the large
+measured yaw transition; numerical configuration remains unchanged.
+
+## Gate 351 — authoritative initial lateral admission
+
+The initial candidate filter now combines the predicted 5 mm lateral gate
+with whole-capsule clearance and live IK. A lateral failure can no longer be
+executed merely because the arm can reach it. The focused predicate, complete
+per-candidate admission logs, clean empty-buffer return, and immutable physical
+handoff receipt are recorded in
+[`GATE_351_2026-09-01.md`](GATE_351_2026-09-01.md).
+
+In the canonical initial state, none of 23 dynamically successful candidates
+passed both lateral and acquisition authorities: two were lateral-safe but IK
+infeasible, while two were acquisition-feasible but laterally unsafe. The
+controller returned code 3 with zero contact instead of executing the prior
+31.862 mm predicted-drift winner. Gate 352 must restore candidate availability
+through a corridor-safe prefix and contact-feasible replenishment while
+retaining the unchanged authoritative conjunction.
