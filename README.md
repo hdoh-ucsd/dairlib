@@ -208,6 +208,80 @@ two errors (plus small pusher/velocity/effort regularization) subject to
 contact-implicit dynamics, and every sampled contact location competes on the
 same objective.
 
+#### Franka arm mathematics (the reference path the xArm6 port inherits)
+
+The `franka_*` executables in `examples/sampling_c3/` are the DAIRLab
+Sampling-C3 reference this port adapts. Their math is identical in structure
+to the xArm6 formulation above; this records it step by step with the C++
+sources.
+
+**Step 1 — the planner does not control joints.** The seven-joint Panda is
+reduced to the spherical pusher at its end effector. The planning state is
+the same mixed robot/object vector:
+
+```text
+x = [ p^EE_W,  q_WO,  p^O_W,  ṗ^EE_W,  ω^O_W,  ṗ^O_W ]  ∈ R^19
+```
+
+**Step 2 — how the input is defined.** `u ∈ R^3` is the Cartesian force
+applied at the pusher, in Newtons, bounded by the per-task force limits.
+The planner decides what force the fingertip ball should exert; the OSC
+finds the seven joint torques that realize it.
+
+**Step 3 — the physics.** Drake's manipulator equation for the coupled
+arm/object/table plant:
+
+```text
+M(q) v̇ + C(q, v) v = τ_g(q) + B u + J_nᵀ λ_n + J_tᵀ λ_t
+```
+
+**Step 4 — the matrices inferred each tick.** `@c3//`'s LCS factory
+(`c3/multibody/lcs_factory.cc`, `FormulateAnitescuContactDynamics` at
+`:496-545`) linearizes `f = M⁻¹(Bu − Cv + τ_g)` by autodiff into
+`J_f = [J_q  J_v  J_u]` with exactness offset `d_v`, extracts the contact
+geometry — gaps `φ (n_c)`, normal Jacobians `J_n (n_c × n_v)`, tangential
+Jacobians `J_t (4n_c × n_v)` with a 4-edge friction pyramid per contact,
+the tangent-summing selector `E_t`, and `μ` — and assembles the
+discrete-time LCS under the Anitescu model:
+
+```text
+J_c = E_tᵀ J_n + diag(μ) J_t                          # friction-folded Jacobian
+
+x[t+1] = A x[t] + B u[t] + D λ[t] + d
+0 ≤ λ[t] ⊥ E x[t] + F λ[t] + H u[t] + c ≥ 0
+
+D = [ dt² · qdotNv · M⁻¹ J_cᵀ ;  dt · M⁻¹ J_cᵀ ]
+E = [ dt·J_c·J_q + E_tᵀ J_n · vNqdot/dt ;  J_c + dt·J_c·J_v ]
+F = dt · J_c · M⁻¹ J_cᵀ                               # Delassus coupling
+H = dt · J_c · J_u
+c = E_tᵀ φ/dt + dt·J_c·d_v − E_tᵀ J_n · vNqdot · q/dt
+```
+
+The complementarity row predicts each friction-pyramid direction's
+post-step contact velocity/gap; `0 ≤ λ ⊥ (·) ≥ 0` allows forces only to
+push and only while the gap is closed. `n_c` (pusher-vs-object faces plus
+object-vs-ground witnesses) changes with the sampled candidate and the
+object pose, so every matrix is re-inferred per tick and per candidate.
+
+**Step 5 — the objective** is the same quadratic tracking problem as the
+xArm6 section: `Σ (x_t − x_d)ᵀ Q (x_t − x_d) + Σ u_tᵀ R u_t` over the LCS,
+ADMM weights `G`/`U` on the `(λ, η)` copies
+(`systems/controllers/sampling_based_c3_controller.cc`).
+
+**Step 6 — realizing `u`.** `franka_osc_controller.cc` instantiates the
+shared inverse-dynamics OSC QP
+(`systems/controllers/osc/operational_space_control.cc`) on the seven-joint
+plant: it tracks the planned pusher trajectory, applies the planner's force
+as an external-force objective, and outputs `τ ∈ R^7`. The xArm6 port
+replaces the plant and frames but reuses this OSC QP unchanged. The
+planner's `λ` is a cost demand, not a measured force — the OSC and the
+simulator decide what is physically exerted.
+
+A Python/PyDrake reproduction of this same Franka formulation — with the
+per-tick linearization implemented in `control/lcs_formulator.py` — lives in
+the companion repository:
+[push_anything_ADMM](https://github.com/hdoh-ucsd/push_anything_ADMM#franka-arm-mathematics).
+
 #### Experiment history (gate ledgers)
 
 Terminal `open_table` success has not yet been achieved; each ledger records
