@@ -80,8 +80,21 @@ class XarmStateSender final : public drake::systems::LeafSystem<double> {
       message->velocity[i] =
           state->GetAtIndex(plant_.num_positions() + joint.velocity_start());
       message->velocity_names[i] = params_.robot.controlled_joints[i] + "dot";
-      message->effort_names[i] = params_.robot.controlled_joints[i] + "_actuator";
+      // Use the plant's actual actuator name for the joint: MJCF-path
+      // actuators are "<joint>_actuator", URDF transmissions carry vendor
+      // motor names (e.g. panda_motor1).
+      message->effort_names[i] =
+          ActuatorNameForJoint(params_.robot.controlled_joints[i]);
     }
+  }
+
+  std::string ActuatorNameForJoint(const std::string& joint_name) const {
+    for (drake::multibody::JointActuatorIndex index :
+         plant_.GetJointActuatorIndices()) {
+      const auto& actuator = plant_.get_joint_actuator(index);
+      if (actuator.joint().name() == joint_name) return actuator.name();
+    }
+    throw std::runtime_error("no actuator drives joint " + joint_name);
   }
 
   const drake::multibody::MultibodyPlant<double>& plant_;

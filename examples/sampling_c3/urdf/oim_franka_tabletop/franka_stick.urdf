@@ -513,6 +513,90 @@
     <parent link="panda_link7"/>
     <child link="panda_link8"/>
   </joint>
+  <transmission name="panda_tran1">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="panda_joint1">
+      <hardwareInterface>PositionJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="panda_motor1">
+      <hardwareInterface>PositionJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+      <drake:gear_ratio value="100.0" />
+      <drake:rotor_inertia value="0.0000605721456" />
+    </actuator>
+  </transmission>
+  <transmission name="panda_tran2">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="panda_joint2">
+      <hardwareInterface>PositionJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="panda_motor2">
+      <hardwareInterface>PositionJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+      <drake:gear_ratio value="100.0" />
+      <drake:rotor_inertia value="0.0000605721456" />
+    </actuator>
+  </transmission>
+  <transmission name="panda_tran3">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="panda_joint3">
+      <hardwareInterface>PositionJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="panda_motor3">
+      <hardwareInterface>PositionJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+      <drake:gear_ratio value="100.0" />
+      <drake:rotor_inertia value="0.0000462474144" />
+    </actuator>
+  </transmission>
+  <transmission name="panda_tran4">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="panda_joint4">
+      <hardwareInterface>PositionJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="panda_motor4">
+      <hardwareInterface>PositionJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+      <drake:gear_ratio value="100.0" />
+      <drake:rotor_inertia value="0.0000462474144" />
+    </actuator>
+  </transmission>
+  <transmission name="panda_tran5">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="panda_joint5">
+      <hardwareInterface>PositionJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="panda_motor5">
+      <hardwareInterface>PositionJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+      <drake:gear_ratio value="100.0" />
+      <drake:rotor_inertia value="0.0000205544064" />
+    </actuator>
+  </transmission>
+  <transmission name="panda_tran6">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="panda_joint6">
+      <hardwareInterface>PositionJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="panda_motor6">
+      <hardwareInterface>PositionJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+      <drake:gear_ratio value="100.0" />
+      <drake:rotor_inertia value="0.0000205544064" />
+    </actuator>
+  </transmission>
+  <transmission name="panda_tran7">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="panda_joint7">
+      <hardwareInterface>PositionJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="panda_motor7">
+      <hardwareInterface>PositionJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+      <drake:gear_ratio value="100.0" />
+      <drake:rotor_inertia value="0.0000205544064" />
+    </actuator>
+  </transmission>
   <drake:collision_filter_group name="group_link57">
     <drake:member link="panda_link5"/>
     <drake:member link="panda_link7"/>
@@ -524,10 +608,10 @@
     <drake:ignored_collision_filter_group name="group_link68"/>
   </drake:collision_filter_group>
 
-  <!-- OIM open_table additions: weld the base to the world (the MJCF xArm6
-       gets this from its worldbody attachment) and mount the rigid pushing
-       stick on the flange. Stick geometry matches the xArm6 vendor stick:
-       capsule r=0.00555, half-length 0.08415, tip at z=0.1794. -->
+  <!-- OIM open_table additions: weld the base to the world and mount the
+       rigid pushing stick on the flange (capsule r=0.00555, half-length
+       0.08415, tip at z=0.1794 in the stick frame). Everything above this
+       comment is Drake's native panda_arm.urdf, meshes localized. -->
   <link name="world"/>
   <joint name="franka_base_weld" type="fixed">
     <parent link="world"/>
