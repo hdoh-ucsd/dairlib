@@ -87,6 +87,120 @@ Build what you want via Bazel. From `dairlib`,  `bazel build ...` will build the
 ## Included Modules
 A list of included modules
 
+### Object-Informed-Manipulation (OIM xArm6 port)
+
+The C++ xArm6 port connects the OIM-T spatial model, Full Sampling-C3+ contact
+planner, collision-aware task-space acquisition, OSC, and Drake simulation.
+Sources live in
+[`examples/sampling_c3/oim_t/`](examples/sampling_c3/oim_t/); the canonical
+configuration is
+[`parameters/oim_t.yaml`](examples/sampling_c3/oim_t/parameters/oim_t.yaml).
+The implementation and experiment history are documented in
+[`FULL_SAMPLING_C3PLUS_2026-08-31.md`](examples/sampling_c3/oim_t/FULL_SAMPLING_C3PLUS_2026-08-31.md)
+and the per-gate ledgers listed below.
+
+#### Task: `open_table`
+
+An xArm6 with a vertical pushing stick must push a planar T block across an
+open table from its start pose to a goal pose. The goal variables are the
+object's planar SE(2) pose in the `oim_world` frame:
+
+```text
+g = (x_g, y_g, θ_g) = (0.381, -0.400, 3.1416)      # object.goal_pose
+x^o = (x, y, θ)                                     # measured T pose (yaw from quaternion)
+```
+
+Success is a terminal tolerance check on both goal variables simultaneously
+(`task.translation_tolerance`, `task.orientation_tolerance`):
+
+```text
+e_p = || (x, y) - (x_g, y_g) ||_2         <  0.05 m
+e_θ = | wrap(θ - θ_g) |                   <  0.10 rad,   wrap(a) = atan2(sin a, cos a)
+```
+
+The yaw is extracted from the measured quaternion and wrapped exactly as in
+`EvaluateXarmFullSamplingC3PlanarSettle`
+(`xarm6_full_sampling_c3plus.cc:92-107`). The task therefore requires roughly
+0.8 m of translation plus a ~π reorientation of the T.
+
+#### What we optimize
+
+Each control cycle solves a finite-horizon contact-implicit MPC problem with
+C3+ (ADMM over consensus copies) on a locally linearized Linear
+Complementarity System. The state is `x ∈ R^19` (pusher position, object
+quaternion, object position, then velocities), the input is `u ∈ R^3`
+(Cartesian pusher force), contact forces are `λ ∈ R^20`, and the horizon is
+`N = 5`:
+
+```text
+minimize    Σ_{t=0..N} (x_t - x_d)ᵀ Q (x_t - x_d)  +  Σ_{t=0..N-1} u_tᵀ R u_t
+
+subject to  x_{t+1} = A x_t + B u_t + D λ_t + d          (LCS dynamics)
+            0 ≤ λ_t ⊥ E x_t + F λ_t + H u_t + c ≥ 0     (complementarity)
+```
+
+The desired state `x_d` encodes the `open_table` goal variables directly: the
+object-position slots hold `(x_g, y_g, resting_height)` and the
+object-quaternion slots hold `q(θ_g)`, a pure yaw rotation built from
+`goal_pose.z()` (`xarm6_full_sampling_c3plus.cc:1597-1605`). The cost
+matrices are assembled in `RunSolveAtSampledPusher`
+(`xarm6_full_sampling_c3plus.cc:1579-1596`):
+
+```text
+Q = state_cost_scale · diag(state_cost_diagonal)
+  = 50 · diag(0.01, 0.01, 0.01,          # pusher position
+              0.1, 0.1, 0.1, 0.1,        # object quaternion  → orientation goal
+              200, 200, 120,             # object position    → translation goal
+              5, 5, 5,  0.05 ×6)         # velocities
+R = 1.0 · diag(0.01, 0.01, 0.01)
+```
+
+so translation error is weighted at an effective 10,000 per m² on object x/y
+and orientation enters through the quaternion-error terms. ADMM additionally
+carries consensus and projection penalties `G = 0.01·diag(g)` and
+`U = 0.26·diag(u)` on the `λ`/`η` copies (weights 2/1 and 20/1); these enforce
+the complementarity structure and are not part of the task objective.
+
+Around that inner QP, three more objectives shape the behavior:
+
+- **Sample ranking.** Candidate pusher placements are each solved and then
+  scored by forward-simulating the plan through the LCS and accumulating the
+  same quadratic error, `Σ eᵀ Q e` plus a terminal term
+  (`dynamic_rollout_cost`, `xarm6_full_sampling_c3plus.cc:1740-1834`); the
+  minimum-cost candidate is executed. A separate
+  `object_yaw_cost_weight: 50.0` biases goal/sample selection toward yaw
+  progress.
+- **Acquisition IK.** Repositioning to a sampled contact solves an inverse
+  kinematics problem with a position constraint on the stick tip and the
+  restored source tilt objective `w_tilt · (1 - cos ψ)`, `w_tilt = 80`, which
+  keeps the stick vertical inside the feasibility band
+  (`xarm6_sampling_c3_controller.cc:120`, `:391-400`).
+- **OSC tracking.** The 500 Hz operational-space controller tracks the
+  selected trajectory with Cartesian gains `kp = 200`, `kd = 20` and a
+  0.01-weight joint-posture regularizer.
+
+In short: the *task* asks for `e_p < 0.05 m` and `e_θ < 0.10 rad` on the T's
+planar pose; the *optimizer* minimizes a quadratic penalty on exactly those
+two errors (plus small pusher/velocity/effort regularization) subject to
+contact-implicit dynamics, and every sampled contact location competes on the
+same objective.
+
+#### Experiment history (gate ledgers)
+
+Terminal `open_table` success has not yet been achieved; each ledger records
+the mechanism landed, its receipts, and the measured terminal error:
+
+| Gates | Landed | Terminal `(e_p, e_θ)` |
+| --- | --- | --- |
+| [241–340](examples/sampling_c3/oim_t/GATES_241_340_2026-09-01.md) | Measured contact-phase budgeting, persistent response completion, whole-capsule/live-IK local repositioning, recovery lateral reserve | 0.757 m, 2.950 rad |
+| [341–350](examples/sampling_c3/oim_t/GATES_341_350_2026-09-01.md) | Removed positive-gap false completion; elevated traverse split from lowering; nonincreasing live-FK posture steps | 0.764 m, 2.844 rad |
+| [351](examples/sampling_c3/oim_t/GATE_351_2026-09-01.md) | 5 mm predicted lateral gate authoritative at execution admission (clean exit, no contact: admission sets were disjoint) | — |
+| [352–362](examples/sampling_c3/oim_t/GATES_352_362_2026-09-01.md) | Replenished admission set; contact-continuation latch; dwell → release → measured replanning → successor contact cycle (one productive cycle: 4.7 mm, 0.033 rad) | 0.773 m, 3.038 rad |
+| [363–369](examples/sampling_c3/oim_t/GATES_363_369_2026-09-01.md) | DAIRLab-Panda-aligned execution logistics; capsule-clear reorientation (fixed-home recoveries 11 → 0; joint-3 saturation 19.3% → 6.7%) | 0.726 m, 2.910 rad |
+| [370–374](examples/sampling_c3/oim_t/GATES_370_374_2026-09-01.md) | 2 ms Drake point-pair contact receipts; diagnostic contact classifier and corrected renderer | 0.784 m, 3.086 rad |
+| [375–379](examples/sampling_c3/oim_t/GATES_375_379_2026-09-01.md) | Receipts joined to the controller's selected-face transaction; exposed 357 dwell credits over 7.12 s with no physical contact | — |
+| [380](examples/sampling_c3/oim_t/GATE_380_2026-09-02.md) | Root cause fixed: direction-preserving limiter + restored `w_tilt = 80` tilt objective (the clamp had masked the dropped tilt cost); C-run clean — 0 dwell REJECTs, 0.13 mm drift | gate tier |
+
 ### DIRCON
 A modern Drake implementation of the DIRCON constrained trajectory optimization algorithm. Currently under construction. See `/examples/PlanarWalker/run_gait_dircon.cc` for a simple example of the hybrid DIRCON algorithm. The more complete example set (from the paper) currently exists on an older version of Drake https://github.com/mposa/drake/tree/hybrid-merge
 
