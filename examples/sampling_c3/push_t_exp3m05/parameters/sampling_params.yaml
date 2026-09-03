@@ -60,7 +60,7 @@ unsuccessful_radius: 0.01
 
 c3_min_clearance: 0.01
 
-ee_z_close: true # true = require ee to be close to sampling z-height before entering c3
+ee_z_close: false # push_t-era semantics: no z-gate on entering C3 (z_height -0.004 is below the floor+sphere minimum of ~0.005, making the anything-style gate unsatisfiable)
 
 gen_planar_samples: true # true = projects all samples to z_height
 
