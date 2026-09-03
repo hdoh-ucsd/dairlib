@@ -172,13 +172,14 @@ the principled default.
 
 ## Settled: the true OIM T, and the gyration-commensurate Q
 
-**Terminology.** The "rule Q" is henceforth the **gyration-commensurate Q**
-(`commensurateQ` in demo/ledger names): object orientation weight scaled so
+**Terminology.** The "rule Q" is the **scaledQ** (short for the
+gyration-commensurate Q; `scaledQ` in demo names, historical ledgers say
+`commQ`/`ruleQ`): object orientation weight scaled so
 q_θ/q_pos = ρ_g² relative to the tuned native baseline
 (quat 1000 → 260, object angular-velocity 0.05 → 0.013 for the OIM
 geometry; w_Q and R unchanged). Demo dirs renamed accordingly
-(`push_t_oimdimsT_1kg_commensurateQ`, `push_t_oimdimsT_m005_{nativeQ,commensurateQ}`,
-`push_t_oimT_m01_{nativeQ,commensurateQ}`).
+(`push_t_oimdimsT_1kg_scaledQ`, `push_t_oimdimsT_m005_{nativeQ,scaledQ}`,
+`push_t_oimT_m01_{nativeQ,scaledQ}`).
 
 **The settling experiment.** The *true* OIM T — exact OIM dimensions AND
 exact OIM mass 0.1 kg (link masses 0.0529/0.0471, inertias ×0.1) — on the
@@ -217,6 +218,25 @@ generating rule itself predicts via its force-headroom caveat:
 n = 3–5 per cell: directions are consistent across three object masses,
 but individual comparisons are not statistically significant.
 
+### Failure post-mortems (true OIM T, n=5 arms)
+
+Per-trial time/steps to goal (10 Hz steps): scaledQ successes 56.0 s/560,
+63.5 s/635, 82.8 s/828, 121.3 s/1213; nativeQ successes 78.3 s/783,
+82.9 s/829, 98.7 s/987.
+
+- **scaledQ trial 3 — inner-workspace trap (geometric, not Q):** the first
+  push drove the T diagonally to (0.273, −0.03), radius 0.276 from the
+  base. Pushing it back toward the goal requires the EE on the base side
+  of the object at radius ≈ 0.21 — inside the `robot_radius_limits`
+  inner bound of 0.25 — so no admissible contact sample exists; the
+  planner repositioned 172 times while the object crept < 2 mm and
+  0.02 rad in 10 minutes. Mitigations live in sampling/workspace config
+  (inner radius, or keeping early pushes off the base direction), not Q.
+- **nativeQ trial 3 — mid-path translation stall:** rotation complete
+  (θ 0.086) at healthy radius (x = 0.425) but y-translation stopped at
+  −0.03 of −0.30 — the same translation-throughput signature as the 1 kg
+  native T. nativeQ trial 4 never composed a push sequence.
+
 ## Conclusions (final)
 
 1. **The OIM-style goal is not a blocker.** Every capable object makes
@@ -242,7 +262,7 @@ but individual comparisons are not statistically significant.
    (≈ 0.4 m residual across all 1 kg configs and both Q designs); no Q
    rebalance addresses it. That — push cadence and reposition overhead —
    is the frontier if 1 kg-class objects ever matter.
-6. **Recommended OIM configuration:** `push_t_oimT_m01_commensurateQ` —
+6. **Recommended OIM configuration:** `push_t_oimT_m01_scaledQ` —
    true OIM T (0.1 kg) with the gyration-commensurate Q — 4/5 success,
    809 mean steps-to-goal on successes.
 
@@ -261,7 +281,7 @@ but individual comparisons are not statistically significant.
   (`render_c3plus_run.py`); copies live with the session receipts.
 - One trial of the recommended configuration:
   `franka_{osc_controller,sampling_c3_controller,sim}
-  --demo_name=push_t_oimT_m01_commensurateQ
+  --demo_name=push_t_oimT_m01_scaledQ
   --lcm_url=udpm://239.255.76.67:7991?ttl=0`.
 
 *Report from the 2026-09-02/03 ablation sessions. Nondeterminism caveat:
