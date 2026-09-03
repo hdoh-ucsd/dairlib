@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<sdf version="1.7">
+  <model name="push_t_Ty_control">
+    <link name="vertical_link">
+      <pose>0.000000 0.000000 0 0 0 0</pose>
+      <inertial><mass>0.5</mass>
+        <inertia><ixx>0.00009229</ixx><iyy>0.00113333</iyy><izz>0.00109229</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial>
+      <visual name="vertical_link_visual"><geometry><box><size>0.160000 0.024800 0.040000</size></box></geometry></visual>
+      <collision name="vertical_link_collision"><geometry><box><size>0.160000 0.024800 0.040000</size></box></geometry></collision>
+      <collision name="c1"><pose>-0.120000 0.049600 -0.020000 0 0 0</pose><geometry><sphere><radius>0.001</radius></sphere></geometry></collision>
+      <collision name="c2"><pose>-0.120000 -0.049600 -0.020000 0 0 0</pose><geometry><sphere><radius>0.001</radius></sphere></geometry></collision>
+      <collision name="c3"><pose>0.080000 0 -0.020000 0 0 0</pose><geometry><sphere><radius>0.001</radius></sphere></geometry></collision>
+    </link>
+    <link name="horizontal_link">
+      <pose>-0.100000 0.000000 0 0 0 1.5708</pose>
+      <inertial><mass>0.5</mass>
+        <inertia><ixx>0.00013333</ixx><iyy>0.00047669</iyy><izz>0.00047669</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial>
+      <visual name="horizontal_link_visual"><geometry><box><size>0.099200 0.040000 0.040000</size></box></geometry></visual>
+      <collision name="horizontal_link_collision"><geometry><box><size>0.099200 0.040000 0.040000</size></box></geometry></collision>
+    </link>
+    <joint name="fixed_joint" type="fixed"><parent>vertical_link</parent><child>horizontal_link</child></joint>
+  </model>
+</sdf>
