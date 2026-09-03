@@ -217,46 +217,54 @@ generating rule itself predicts via its force-headroom caveat:
 n = 3–5 per cell: directions are consistent across three object masses,
 but individual comparisons are not statistically significant.
 
-## Conclusions
+## Conclusions (final)
 
-1. **The OIM-style goal is not the blocker.** The native T makes major,
-   consistent progress on the long π-flip task (79 % of the rotation in the
-   screening run); it needs more time/budget, not a different method.
-2. **Mass is not the blocker — lighter is easier.** The 0.05 kg T is the only
-   configuration that reaches the goal (2/5 trials, ~48–68 s sim when it
-   lands; success-mean errors 0.019 m / 0.033 rad).
-3. **Geometry/scale is the blocker, along every axis.** The full
-   OIM-dimension T is the worst performer, and each single-axis match (x
-   shrink, y shrink, z growth) independently collapses the success rate to
-   0/3 with severely degraded rotation progress. Degradation ordering:
-   T_y (mildest, θ≈1.18) < T_z (θ≈1.98) ≈ T_x (θ≈2.14) — note the axis
-   scale magnitudes differ (0.62 / 1.49 / 0.371), so severity tracks the
-   size of the geometric change, not a privileged axis.
-4. On OIM-style long goals, the dominant failure in this stack is
-   **translation throughput** — a consistent ≈ 0.4 m stall across object
-   scales and Q choices — so cost-matrix work should target translation
-   progress (or the reposition/push cadence), not the rotation balance.
-5. Practical implication for OIM transfer: adaptation effort should target
-   the geometry coupling (contact sampling standoffs, pusher-to-feature
-   scale ratios, and drift-per-rotation kinematics of small footprints) —
-   not the cost function's mass/goal terms. Similarity-scaled costs are
-   necessary (see the oim_franka arc receipts) but demonstrably not
-   sufficient once member widths approach the pusher diameter
-   (OIM member 0.0198 m vs sphere ⌀ 0.039 m).
+1. **The OIM-style goal is not a blocker.** Every capable object makes
+   consistent progress on the 0.6 m + π task; the true OIM T completes it
+   in 56–121 s of sim time.
+2. **Mass dominates.** Lighter is strictly easier: the 0.05 kg native-shape
+   T succeeds where the 1 kg native T never does (0/5, stalling ≈ 0.35 m
+   short on translation), and the OIM geometry flips from 0/6 at 1 kg to
+   7/8 pooled at 0.05–0.1 kg.
+3. **The early "geometry is the blocker" reading was a mass confound.**
+   exp2 and the axis-matched Tx/Ty/Tz variants shrank the T while keeping
+   1 kg — up to ~10× the true OIM density — so per-feature friction load,
+   not shape, drove their failures. At its true 0.1 kg mass the exact OIM
+   geometry is reliably solvable by the unmodified reference stack.
+4. **Q design is a second-order reliability effect with a clean
+   force-headroom interaction.** Success speeds are indistinguishable
+   between native Q and the gyration-commensurate Q; at light mass the
+   commensurate weights remove hard-stall draws (pooled 7/8 vs 5/8), while
+   at 1 kg they hurt rotation (θ 1.11 ± 0.72 vs 0.55 ± 0.08). Use
+   commensurateQ when force headroom is ample; keep the native
+   orientation-drive overweight when it is not.
+5. **For heavy objects on long goals, translation throughput binds first**
+   (≈ 0.4 m residual across all 1 kg configs and both Q designs); no Q
+   rebalance addresses it. That — push cadence and reposition overhead —
+   is the frontier if 1 kg-class objects ever matter.
+6. **Recommended OIM configuration:** `push_t_oimT_m01_commensurateQ` —
+   true OIM T (0.1 kg) with the gyration-commensurate Q — 4/5 success,
+   809 mean steps-to-goal on successes.
 
 ## Artifacts & reproduction
 
-- Results + videos: `D:\projects\ERL\push_anything_ADMM\results\c3ab_*_20260902`
-  (dirs SHA-256-verified) and `/root/push_anything_ADMM/results/c3ab_*`.
-- Ledgers: `c3ab_{exp1,exp3,expTx,expTy,expTz}_trials.jsonl` (+ `_result.json`).
-- Harness: success-terminated trial runner
-  (`run_c3plus_trials.sh` — three binaries per lane on isolated LCM ports,
-  parallel lanes), pydrake-LCM recorder (`record_full_state.py`), replay
-  renderer (`render_c3plus_run.py`); copies live with the session receipts.
-- One trial by hand:
-  `franka_{osc_controller,sampling_c3_controller,sim} --demo_name=push_t_exp1
+- Results + videos:
+  `D:\projects\ERL\push_anything_ADMM\results\c3ab_*` and
+  `/root/push_anything_ADMM/results/c3ab_*`; feature-named video collection
+  (45 clips): `c3ab_video_collection_20260903/`.
+- Ledgers (`.jsonl` + full-schema `_result.json`):
+  `c3ab_{exp1,exp3,expTx,expTy,expTz,exp2_ctrl,exp4_ruleQ,exp5nat,exp5rule,
+  oimT_m01_natQ,oimT_m01_commQ}_trials`.
+- Harness: success-terminated trial runner (`run_c3plus_trials.sh`; three
+  binaries per lane on isolated LCM ports, parallel lanes), pydrake-LCM
+  recorder (`record_full_state.py`), replay renderer
+  (`render_c3plus_run.py`); copies live with the session receipts.
+- One trial of the recommended configuration:
+  `franka_{osc_controller,sampling_c3_controller,sim}
+  --demo_name=push_t_oimT_m01_commensurateQ
   --lcm_url=udpm://239.255.76.67:7991?ttl=0`.
 
-*Report generated by the 2026-09-02 ablation session; single-seed caveat:
-the stack is nondeterministic across runs (threading/timing), so all n are
-independent draws, not seeds.*
+*Report from the 2026-09-02/03 ablation sessions. Nondeterminism caveat:
+the stack varies run-to-run (threading/timing), so all n are independent
+draws, not seeds; per-cell n = 3–5 — directions are consistent across
+masses, individual comparisons not statistically significant.*
