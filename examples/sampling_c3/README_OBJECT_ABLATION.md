@@ -268,10 +268,12 @@ Per-trial time/steps to goal (10 Hz steps): scaledQ successes 56.0 s/560,
 
 ## Artifacts & reproduction
 
-- Results + videos:
-  `D:\projects\ERL\push_anything_ADMM\results\c3ab_*` and
-  `/root/push_anything_ADMM/results/c3ab_*`; feature-named video collection
-  (45 clips): `c3ab_video_collection_20260903/`.
+- Results + videos (organized 2026-09-03): everything under
+  `D:\projects\ERL\push_anything_ADMM\results\c3ab_ablation_study\` and
+  `/root/push_anything_ADMM/results/c3ab_ablation_study/`; feature-named
+  video collection (45 clips) inside as `c3ab_video_collection_20260903/`.
+  Superseded pre-z-gate-fix iterations were erased; the stock-baseline
+  receipt `c3ab_exp0_stock_baseline/` is retained as bug evidence.
 - Ledgers (`.jsonl` + full-schema `_result.json`):
   `c3ab_{exp1,exp3,expTx,expTy,expTz,exp2_ctrl,exp4_ruleQ,exp5nat,exp5rule,
   oimT_m01_natQ,oimT_m01_commQ}_trials`.
