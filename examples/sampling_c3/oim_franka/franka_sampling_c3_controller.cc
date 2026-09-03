@@ -101,8 +101,34 @@ struct ContactSample {
 // Geometry copied from the imported MJCF/SDF collision elements.  These are
 // deliberately not tunable controller margins: the planner receipt is meant to
 // describe the same pusher capsule and exact two-box T that Drake simulates.
-constexpr double kCapsuleStartZ = 0.00555;
-constexpr double kCapsuleEndZ = 0.17385;
+// Pusher collision segment along the tool axis, derived from the same
+// config the sim/plant use so the receipt describes the simulated pusher
+// for any end effector: the xArm stick gives [0.00555, 0.17385]; the
+// native Anything sphere (end_effector_point z=0, r=0.0195) gives the
+// degenerate segment [+r, -r] whose union with the radius is the sphere.
+// The segment is the collision centerline inset by the radius at each end,
+// so radius expansion reproduces the physical surface. For the stick
+// (tip at +0.1794) this is [r, 0.1794 - r]; for the sphere end effector
+// (end_effector_point at its center) the inset collapses and the segment
+// is the center point with zero length.
+inline double CapsuleStartZ(const OimTParams& params) {
+  const double lo = std::min(0.0, params.robot.end_effector_point.z());
+  const double hi = std::max(0.0, params.robot.end_effector_point.z());
+  const double start = lo + params.controller.pusher_radius;
+  return start <= hi - params.controller.pusher_radius
+      ? start : 0.5 * (lo + hi);
+}
+inline double CapsuleEndZ(const OimTParams& params) {
+  const double lo = std::min(0.0, params.robot.end_effector_point.z());
+  const double hi = std::max(0.0, params.robot.end_effector_point.z());
+  const double end = hi - params.controller.pusher_radius;
+  return lo + params.controller.pusher_radius <= end
+      ? end : 0.5 * (lo + hi);
+}
+inline double CapsuleShaftLength(const OimTParams& params) {
+  return std::max(std::abs(CapsuleEndZ(params) - CapsuleStartZ(params)),
+                  1.0e-6);
+}
 constexpr double kCrossbarCenterY = 0.0099;
 constexpr double kCrossbarHalfX = 0.0445;
 constexpr double kCrossbarHalfY = 0.0099;
@@ -126,8 +152,8 @@ constexpr double kVerticalAxisTiltCostWeight = 80.0;
 double CapsuleOrientationClearanceHeight(const OimTParams& params) {
   const double tip_local_z = params.robot.end_effector_point.z();
   const double maximum_tip_to_capsule_center_distance = std::max(
-      std::abs(tip_local_z - kCapsuleStartZ),
-      std::abs(tip_local_z - kCapsuleEndZ));
+      std::abs(tip_local_z - CapsuleStartZ(params)),
+      std::abs(tip_local_z - CapsuleEndZ(params)));
   return std::max(
       params.controller.reposition_waypoint_height,
       maximum_tip_to_capsule_center_distance +
@@ -191,9 +217,9 @@ RepositionCollisionReceipt EvaluateRepositionCollision(
       plant.GetBodyByName(params.robot.end_effector_body);
   const auto X_WEe = plant.EvalBodyPoseInWorld(*context, end_effector);
   const Eigen::Vector3d capsule_start_W =
-      X_WEe * Eigen::Vector3d(0.0, 0.0, kCapsuleStartZ);
+      X_WEe * Eigen::Vector3d(0.0, 0.0, CapsuleStartZ(params));
   const Eigen::Vector3d capsule_end_W =
-      X_WEe * Eigen::Vector3d(0.0, 0.0, kCapsuleEndZ);
+      X_WEe * Eigen::Vector3d(0.0, 0.0, CapsuleEndZ(params));
   const Eigen::Vector3d tip_W = X_WEe * params.robot.end_effector_point;
   const Eigen::Rotation2Dd R_OW(-object_xyz_yaw.z());
   auto to_object = [&](const Eigen::Vector3d& point_W) {
@@ -259,9 +285,9 @@ ContactCapsuleClearanceReceipt EvaluateContactCapsuleClearance(
   const Eigen::Vector3d axis_W = stick_axis_W.normalized();
   const double tip_local_z = params.robot.end_effector_point.z();
   const Eigen::Vector3d capsule_start_W =
-      tip_W - axis_W * (tip_local_z - kCapsuleStartZ);
+      tip_W - axis_W * (tip_local_z - CapsuleStartZ(params));
   const Eigen::Vector3d capsule_end_W =
-      tip_W - axis_W * (tip_local_z - kCapsuleEndZ);
+      tip_W - axis_W * (tip_local_z - CapsuleEndZ(params));
   // The distal activation band is omitted from the conservative shaft
   // segment.  A selected-face exception below also admits OIM's intended
   // vertical cylindrical side contact; every other radius-expanded
@@ -7913,7 +7939,7 @@ int DoMain(int argc, char* argv[]) {
             approach_phase_state == ApproachPhase::kRepositionOrient
                 ? (params.controller.pusher_radius +
                    params.controller.contact_activation_tolerance) /
-                      (kCapsuleEndZ - kCapsuleStartZ)
+                      CapsuleShaftLength(params)
                 : 1.0e-3;
         const auto posture = SolveCollisionAwarePostureStep(
             plant, context.get(), params, live_controlled_positions,
@@ -7936,7 +7962,7 @@ int DoMain(int argc, char* argv[]) {
               task_target, R_WO * approach_sample->normal, object_pose,
               (params.controller.pusher_radius +
                params.controller.contact_activation_tolerance) /
-                  (kCapsuleEndZ - kCapsuleStartZ));
+                  CapsuleShaftLength(params));
           if (!posture_recovery.finite ||
               !posture_recovery.receipt.collision_free()) {
             const int blocked_sample_index = *approach_sample_index;

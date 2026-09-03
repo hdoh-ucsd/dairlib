@@ -1354,8 +1354,7 @@ SpatialLcsProblem BuildSpatialLcsProblem(
   drake::multibody::Parser parser(&plant);
   parser.SetAutoRenaming(true);
   parser.AddModels(dairlib::FindResourceOrThrow(
-      "examples/sampling_c3/urdf/oim_xarm6_tabletop/"
-      "xarm6_lcs_pusher.urdf"));
+      "examples/sampling_c3/urdf/oim_franka_tabletop/franka_lcs_pusher.urdf"));
   parser.AddModels(dairlib::FindResourceOrThrow(dairlib::kGroundModel));
   parser.AddModels(dairlib::FindResourceOrThrow(params.object.model));
   plant.WeldFrames(plant.world_frame(),

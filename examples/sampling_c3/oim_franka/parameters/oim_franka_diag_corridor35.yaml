@@ -6,10 +6,10 @@
 scenario_name: open_table
 
 robot:
-  model: examples/sampling_c3/urdf/oim_franka_tabletop/franka_puck.urdf
-  model_instance: franka_puck
-  end_effector_body: puck_center
-  end_effector_point: [0.0, 0.0, 0.0]
+  model: examples/sampling_c3/urdf/oim_franka_tabletop/franka_stick.urdf
+  model_instance: franka_stick
+  end_effector_body: franka_stick
+  end_effector_point: [0.0, 0.0, 0.1794]
   controlled_joints: [panda_joint1, panda_joint2, panda_joint3, panda_joint4, panda_joint5, panda_joint6, panda_joint7]
   home_positions: [0.0, 0.4, 0.0, -1.9, 0.0, 2.3, 0.0]
   # Franka Panda vendor limits, identical to Drake's native panda_arm.urdf
@@ -84,13 +84,10 @@ controller:
   # Use the canonical C3 task window during the long vertical transit.
   descent_command_step_limit: 0.01
   # Measured stick radius and explicit free-space/contact transition gates.
-  pusher_radius: 0.0195
+  pusher_radius: 0.00555
   approach_clearance: 0.005
   # Descend outside the T collision envelope, then engage laterally at height.
-  # Radius-aware for the 19.5 mm sphere: the stick value 0.020 left only
-  # 0.5 mm of surface clearance and the descent grazed the T (measured
-  # 14 mm displacement during acquisition).
-  descent_clearance: 0.040
+  descent_clearance: 0.020
   approach_planar_tolerance: 0.005
   contact_activation_tolerance: 0.003
   # Rotational exact-T planning and object-x corridor rejection.
@@ -102,7 +99,7 @@ controller:
   # lambda = 0.445 copy and the similarity-transformed C3 costs preserve
   # Push-T push+rotate behavior whose lateral excursion lands at 5-6 mm on
   # this object. Scale the corridor by 1/lambda: 0.005 -> 0.0112.
-  lateral_drift_tolerance: 0.0112
+  lateral_drift_tolerance: 0.035
   # Maintain off-center normal loading after reaching the first C3 target.
   minimum_contact_normal_step: 0.002
   # DAIRLab-anything piecewise-linear repositioning, specialized to OIM-T.
@@ -119,12 +116,7 @@ controller:
   # geometric-latch periods. Note: a 0.9-of-minimum rule ratchets downward
   # with each new below-minimum draw; revisit the estimator if the
   # distribution keeps widening.
-  # Recalibrated for the sphere end effector by the gate-386 rule
-  # (0.9 x minimum measured productive joined count). The stick pressed for
-  # ~11 s grinds (bar 566); the puck delivers its measured productive push
-  # (16.7 mm, +0.085 rad, run oim_franka_puck5) in 17 joined updates and the
-  # contact then naturally ends. floor(0.9 x 17) = 15.
-  physical_contact_dwell_steps: 15
+  physical_contact_dwell_steps: 566
   successor_progress_window_steps: 2000
   successor_minimum_yaw_progress: 0.002
   successor_minimum_translation_progress: 0.002
