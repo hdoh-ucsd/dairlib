@@ -202,7 +202,9 @@ int DoMain(int argc, char* argv[]) {
         contact_geoms["CAPSULE_3_SPHERE_1"], contact_geoms["GROUND"]));
     ground_object_contact_pairs.push_back(SortedPair(
         contact_geoms["CAPSULE_3_SPHERE_2"], contact_geoms["GROUND"]));
-  } else if (FLAGS_demo_name == "push_t") {
+  } else if (FLAGS_demo_name.rfind("push_t", 0) == 0) {
+    // push_t and its object-ablation variants (push_t_exp*) share the
+    // planar single-object demo wiring; parameters differ per demo dir.
     drake::geometry::GeometryId vertical_geoms =
         plant_lcs.GetCollisionGeometriesForBody(
             plant_lcs.GetBodyByName("vertical_link"))[0];
@@ -395,7 +397,9 @@ int DoMain(int argc, char* argv[]) {
     target_generator =
         std::make_unique<systems::SamplingC3GoalGeneratorJacktoy>(
             plant_object, controller_params.goal_params, object_indices);
-  } else if (FLAGS_demo_name == "push_t") {
+  } else if (FLAGS_demo_name.rfind("push_t", 0) == 0) {
+    // push_t and its object-ablation variants (push_t_exp*) share the
+    // planar single-object demo wiring; parameters differ per demo dir.
     target_generator = std::make_unique<systems::SamplingC3GoalGeneratorPlanar>(
         plant_object, controller_params.goal_params, object_indices);
   } else if (FLAGS_demo_name == "anything") {
