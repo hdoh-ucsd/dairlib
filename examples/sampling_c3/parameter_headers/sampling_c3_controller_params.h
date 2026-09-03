@@ -5,6 +5,7 @@
 #include "examples/sampling_c3/parameter_headers/progress_params.h"
 #include "examples/sampling_c3/parameter_headers/sampling_params.h"
 #include "examples/sampling_c3/parameter_headers/goal_params.h"
+#include "examples/sampling_c3/parameter_headers/scenario_params.h"
 
 #include "drake/common/yaml/yaml_read_archive.h"
 #include <drake/common/yaml/yaml_io.h>
@@ -16,6 +17,7 @@ struct SamplingC3ControllerParams {
   std::string progress_params_file;       // mode switching params
   std::string sampling_params_file;       // sampling params
   std::string goal_params_file;           // goal checking/setting params
+  std::optional<std::string> scenario_params_file;  // per-scenario environment
 
   std::string sim_params_file;            // simulation params
   std::string vis_params_file;            // visualization params
@@ -44,6 +46,7 @@ struct SamplingC3ControllerParams {
   SamplingC3ProgressParams progress_params;
   SamplingParams sampling_params;
   SamplingC3GoalParams goal_params;
+  SamplingC3ScenarioParams scenario_params;  // empty when no file given
 
   template <typename Archive>
   void Serialize(Archive* a) {
@@ -52,6 +55,7 @@ struct SamplingC3ControllerParams {
     a->Visit(DRAKE_NVP(progress_params_file));
     a->Visit(DRAKE_NVP(sampling_params_file));
     a->Visit(DRAKE_NVP(goal_params_file));
+    a->Visit(DRAKE_NVP(scenario_params_file));
     a->Visit(DRAKE_NVP(sim_params_file));
     a->Visit(DRAKE_NVP(vis_params_file));
     a->Visit(DRAKE_NVP(osc_params_file));
@@ -80,6 +84,10 @@ struct SamplingC3ControllerParams {
       sampling_params_file);
     goal_params = drake::yaml::LoadYamlFile<SamplingC3GoalParams>(
       goal_params_file);
+    if (scenario_params_file.has_value()) {
+      scenario_params = drake::yaml::LoadYamlFile<SamplingC3ScenarioParams>(
+          scenario_params_file.value());
+    }
 
     num_objects = base_names.size();
   }

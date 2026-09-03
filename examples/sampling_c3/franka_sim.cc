@@ -85,6 +85,14 @@ int DoMain(int argc, char* argv[]) {
   std::vector<ModelInstanceIndex> object_indices = AddObjectsToPlant(
         &plant, &scene_graph, sim_params.object_models);
 
+  // Scenario static obstacle(s): an SDF with <static>true</static> welds
+  // itself; the planner shapes costs from the same scenario_params file.
+  if (controller_params.scenario_params.obstacle_model.has_value()) {
+    drake::multibody::Parser obstacle_parser(&plant, &scene_graph);
+    obstacle_parser.AddModels(dairlib::FindResourceOrThrow(
+        controller_params.scenario_params.obstacle_model.value()));
+  }
+
   // ModelInstanceIndex object_index = AddObjectToPlant(&plant, &scene_graph,
   //                                                    sim_params.object_model);
 

@@ -1,4 +1,5 @@
 #pragma once
+#include <optional>
 
 #include <Eigen/Dense>
 #include "drake/common/yaml/yaml_read_archive.h"

@@ -1077,6 +1077,23 @@ drake::systems::EventStatus SamplingC3Controller::ComputePlan(
     all_sample_costs_[i] =
         c3_cost + progress_params_.travel_cost_per_meter * xy_travel_distance;
 
+    // Scenario obstacle shaping: exponential proximity penalty over the
+    // predicted object path for every scenario obstacle disc [x, y, r]
+    // (scenario_params.yaml; scenarios without obstacles pay nothing).
+    const auto& scenario = controller_params_.scenario_params;
+    if (scenario.obstacle_cost_weight > 0.0 && !scenario.obstacles.empty()) {
+      double obstacle_cost = 0.0;
+      for (const VectorXd& xk : cost_trajectory_pair.second) {
+        for (const std::vector<double>& obs : scenario.obstacles) {
+          const double clearance =
+              std::hypot(xk(7) - obs[0], xk(8) - obs[1]) - obs[2];
+          obstacle_cost += scenario.obstacle_cost_weight *
+              std::exp(-clearance / scenario.obstacle_cost_decay);
+        }
+      }
+      all_sample_costs_[i] += obstacle_cost;
+    }
+
     // Add additional costs based on repositioning progress.
     if ((i == SampleIndex::kCurrentReposTarget) && finished_reposition_flag_) {
       all_sample_costs_[i] += progress_params_.finished_reposition_cost;
