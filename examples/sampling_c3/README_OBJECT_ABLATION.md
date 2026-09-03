@@ -145,6 +145,31 @@ binding constraint anyway — **translation is**: native-Q small T, rule-Q
 small T, and the native big T all stall at ≈ 0.34–0.46 m residual on the
 0.6 m goal.
 
+## exp5 — OIM-dimension T at 0.05 kg: the goal is reachable
+
+The fully axis-aligned OIM-geometry T (0.089×0.0992×0.0596) at 0.05 kg
+(masses/inertias ×0.05), success-terminated trials, n = 3 per Q config:
+
+| Config | Successes | success times (sim s) | failed draw |
+|---|---|---|---|
+| `push_t_exp5rule` (rule Q: quat 260, ω 0.013) | **3/3** | 57.5, 95.5, 97.2 | — |
+| `push_t_exp5nat` (native Q: quat 1000, ω 0.05) | 2/3 | 46.4, 97.5 | 0.47 m / 1.34 rad |
+
+First configuration in the study where the OIM *geometry* reaches the goal
+— and it does so reliably. Attribution: **mass is the primary rescuer**
+(the native-Q control also mostly succeeds at 0.05 kg, where the same
+geometry was 0/6 at 1 kg across both Q configs). The rule-derived Q is
+equal-or-better at light mass (3/3 vs 2/3; n too small for significance)
+— the opposite sign of its effect at 1 kg — consistent with the rule's own
+caveat: the commensurate weights are right when force headroom is large,
+while heavy objects need the extra orientation drive of the ×1049 task
+statement.
+
+Implication for the true OIM T (0.1 kg, same geometry): it sits between
+the 0.05 kg (works) and 1 kg (fails) regimes, much closer to 0.05 kg; the
+reference stack with either Q is likely capable, with the rule-derived Q
+the principled default.
+
 ## Conclusions
 
 1. **The OIM-style goal is not the blocker.** The native T makes major,
