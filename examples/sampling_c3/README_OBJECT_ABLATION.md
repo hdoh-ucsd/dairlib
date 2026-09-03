@@ -237,6 +237,147 @@ Per-trial time/steps to goal (10 Hz steps): scaledQ successes 56.0 s/560,
   −0.03 of −0.30 — the same translation-throughput signature as the 1 kg
   native T. nativeQ trial 4 never composed a push sequence.
 
+## Open-table run videos (all successes and failures)
+
+Every OIM-goal (obstacle-free) trial, grouped by configuration; each
+group lists its exact cost matrices. Video links are relative to this
+README next to `c3ab_video_collection_20260903/` (the D-drive study folder carries both).
+
+### native T (1 kg), OIM goal — nativeQ
+
+**Q/R:** `Q_obj`: pos diag `w_Q·(200,200,120)` = (10000,10000,6000); quat: runtime Hessian of θ² (geodesic angle), weight **1000**; `q_ω` = 0.05·I₃, `q_v` = 0.05·I₃; `R` = w_R·0.01·I₃
+
+| Trial | Outcome | Video |
+|---|---|---|
+| 1 | ❌ FAIL 0.34 m / 0.21 rad | [video](c3ab_video_collection_20260903/nativeT-1kg_oimgoal_nativeQ_trial1_FAIL_pos0.34m_th0.21rad.mp4) |
+| 2 | ❌ FAIL 0.35 m / 0.20 rad | [video](c3ab_video_collection_20260903/nativeT-1kg_oimgoal_nativeQ_trial2_FAIL_pos0.35m_th0.20rad.mp4) |
+| 3 | ❌ FAIL 0.46 m / 2.22 rad | [video](c3ab_video_collection_20260903/nativeT-1kg_oimgoal_nativeQ_trial3_FAIL_pos0.46m_th2.22rad.mp4) |
+| 4 | ❌ FAIL 0.41 m / 1.50 rad | [video](c3ab_video_collection_20260903/nativeT-1kg_oimgoal_nativeQ_trial4_FAIL_pos0.41m_th1.50rad.mp4) |
+| 5 | ❌ FAIL 0.35 m / 1.32 rad | [video](c3ab_video_collection_20260903/nativeT-1kg_oimgoal_nativeQ_trial5_FAIL_pos0.35m_th1.32rad.mp4) |
+
+### native-shape T (0.05 kg) — nativeQ
+
+**Q/R:** `Q_obj`: pos diag `w_Q·(200,200,120)` = (10000,10000,6000); quat: runtime Hessian of θ² (geodesic angle), weight **1000**; `q_ω` = 0.05·I₃, `q_v` = 0.05·I₃; `R` = w_R·0.01·I₃
+
+| Trial | Outcome | Video |
+|---|---|---|
+| 1 | ✅ SUCCESS 47.7 s | [video](c3ab_video_collection_20260903/lightT-0.05kg_oimgoal_trial1_SUCCESS-48s.mp4) |
+| 2 | ✅ SUCCESS 67.6 s | [video](c3ab_video_collection_20260903/lightT-0.05kg_oimgoal_trial2_SUCCESS-68s.mp4) |
+| 3 | ❌ FAIL 0.35 m / 0.62 rad | [video](c3ab_video_collection_20260903/lightT-0.05kg_oimgoal_trial3_FAIL_pos0.35m_th0.62rad.mp4) |
+| 4 | ❌ FAIL 0.32 m / 0.71 rad | [video](c3ab_video_collection_20260903/lightT-0.05kg_oimgoal_trial4_FAIL_pos0.32m_th0.71rad.mp4) |
+| 5 | ❌ FAIL 0.62 m / 2.91 rad | [video](c3ab_video_collection_20260903/lightT-0.05kg_oimgoal_trial5_FAIL_pos0.62m_th2.91rad.mp4) |
+
+### OIM-dims T (1 kg) — nativeQ control
+
+**Q/R:** `Q_obj`: pos diag `w_Q·(200,200,120)` = (10000,10000,6000); quat: runtime Hessian of θ² (geodesic angle), weight **1000**; `q_ω` = 0.05·I₃, `q_v` = 0.05·I₃; `R` = w_R·0.01·I₃
+
+| Trial | Outcome | Video |
+|---|---|---|
+| 1 | ❌ FAIL 0.46 m / 0.62 rad | [video](c3ab_video_collection_20260903/oimdimsT-1kg_nativeQ-control_trial1_FAIL_pos0.46m_th0.62rad.mp4) |
+| 2 | ❌ FAIL 0.46 m / 0.58 rad | [video](c3ab_video_collection_20260903/oimdimsT-1kg_nativeQ-control_trial2_FAIL_pos0.46m_th0.58rad.mp4) |
+| 3 | ❌ FAIL 0.39 m / 0.43 rad | [video](c3ab_video_collection_20260903/oimdimsT-1kg_nativeQ-control_trial3_FAIL_pos0.39m_th0.43rad.mp4) |
+
+### OIM-dims T (1 kg) — scaledQ
+
+**Q/R:** `Q_obj`: pos diag `w_Q·(200,200,120)` = (10000,10000,6000); quat: runtime Hessian of θ², weight **260** (= 1000 × ρ_g² ratio 0.26); `q_ω` = **0.013**·I₃, `q_v` = 0.05·I₃; `R` = w_R·0.01·I₃ (unchanged)
+
+| Trial | Outcome | Video |
+|---|---|---|
+| 1 | ❌ FAIL 0.53 m / 2.14 rad | [video](c3ab_video_collection_20260903/oimdimsT-1kg_ruleQ-quat260_trial1_FAIL_pos0.53m_th2.14rad.mp4) |
+| 2 | ❌ FAIL 0.39 m / 0.56 rad | [video](c3ab_video_collection_20260903/oimdimsT-1kg_ruleQ-quat260_trial2_FAIL_pos0.39m_th0.56rad.mp4) |
+| 3 | ❌ FAIL 0.45 m / 0.64 rad | [video](c3ab_video_collection_20260903/oimdimsT-1kg_ruleQ-quat260_trial3_FAIL_pos0.45m_th0.64rad.mp4) |
+
+### OIM-dims T (0.05 kg) — nativeQ
+
+**Q/R:** `Q_obj`: pos diag `w_Q·(200,200,120)` = (10000,10000,6000); quat: runtime Hessian of θ² (geodesic angle), weight **1000**; `q_ω` = 0.05·I₃, `q_v` = 0.05·I₃; `R` = w_R·0.01·I₃
+
+| Trial | Outcome | Video |
+|---|---|---|
+| 1 | ✅ SUCCESS 46.4 s | [video](c3ab_video_collection_20260903/oimdimsT-0.05kg_nativeQ_trial1_SUCCESS-46s.mp4) |
+| 2 | ✅ SUCCESS 97.5 s | [video](c3ab_video_collection_20260903/oimdimsT-0.05kg_nativeQ_trial2_SUCCESS-98s.mp4) |
+| 3 | ❌ FAIL 0.47 m / 1.34 rad | [video](c3ab_video_collection_20260903/oimdimsT-0.05kg_nativeQ_trial3_FAIL_pos0.47m_th1.34rad.mp4) |
+
+### OIM-dims T (0.05 kg) — scaledQ
+
+**Q/R:** `Q_obj`: pos diag `w_Q·(200,200,120)` = (10000,10000,6000); quat: runtime Hessian of θ², weight **260** (= 1000 × ρ_g² ratio 0.26); `q_ω` = **0.013**·I₃, `q_v` = 0.05·I₃; `R` = w_R·0.01·I₃ (unchanged)
+
+| Trial | Outcome | Video |
+|---|---|---|
+| 1 | ✅ SUCCESS 97.2 s | [video](c3ab_video_collection_20260903/oimdimsT-0.05kg_ruleQ-quat260_trial1_SUCCESS-97s.mp4) |
+| 2 | ✅ SUCCESS 57.5 s | [video](c3ab_video_collection_20260903/oimdimsT-0.05kg_ruleQ-quat260_trial2_SUCCESS-58s.mp4) |
+| 3 | ✅ SUCCESS 95.5 s | [video](c3ab_video_collection_20260903/oimdimsT-0.05kg_ruleQ-quat260_trial3_SUCCESS-96s.mp4) |
+
+### true OIM T (0.1 kg) — nativeQ
+
+**Q/R:** `Q_obj`: pos diag `w_Q·(200,200,120)` = (10000,10000,6000); quat: runtime Hessian of θ² (geodesic angle), weight **1000**; `q_ω` = 0.05·I₃, `q_v` = 0.05·I₃; `R` = w_R·0.01·I₃
+
+| Trial | Outcome | Video |
+|---|---|---|
+| 1 | ✅ SUCCESS 82.9 s | [video](c3ab_video_collection_20260903/trueOIMT-0.1kg_nativeQ_trial1_SUCCESS-83s.mp4) |
+| 2 | ✅ SUCCESS 98.7 s | [video](c3ab_video_collection_20260903/trueOIMT-0.1kg_nativeQ_trial2_SUCCESS-99s.mp4) |
+| 3 | ❌ FAIL 0.28 m / 0.09 rad | [video](c3ab_video_collection_20260903/trueOIMT-0.1kg_nativeQ_trial3_FAIL_pos0.28m_th0.09rad.mp4) |
+| 4 | ❌ FAIL 0.43 m / 3.02 rad | [video](c3ab_video_collection_20260903/trueOIMT-0.1kg_nativeQ_trial4_FAIL_pos0.43m_th3.02rad.mp4) |
+| 5 | ✅ SUCCESS 78.3 s | [video](c3ab_video_collection_20260903/trueOIMT-0.1kg_nativeQ_trial5_SUCCESS-78s.mp4) |
+
+### true OIM T (0.1 kg) — scaledQ
+
+**Q/R:** `Q_obj`: pos diag `w_Q·(200,200,120)` = (10000,10000,6000); quat: runtime Hessian of θ², weight **260** (= 1000 × ρ_g² ratio 0.26); `q_ω` = **0.013**·I₃, `q_v` = 0.05·I₃; `R` = w_R·0.01·I₃ (unchanged)
+
+| Trial | Outcome | Video |
+|---|---|---|
+| 1 | ✅ SUCCESS 56.0 s | [video](c3ab_video_collection_20260903/trueOIMT-0.1kg_commensurateQ_trial1_SUCCESS-56s.mp4) |
+| 2 | ✅ SUCCESS 63.5 s | [video](c3ab_video_collection_20260903/trueOIMT-0.1kg_commensurateQ_trial2_SUCCESS-64s.mp4) |
+| 3 | ❌ FAIL 0.35 m / 2.53 rad | [video](c3ab_video_collection_20260903/trueOIMT-0.1kg_commensurateQ_trial3_FAIL_pos0.35m_th2.53rad.mp4) |
+| 4 | ✅ SUCCESS 121.3 s | [video](c3ab_video_collection_20260903/trueOIMT-0.1kg_commensurateQ_trial4_SUCCESS-121s.mp4) |
+| 5 | ✅ SUCCESS 82.8 s | [video](c3ab_video_collection_20260903/trueOIMT-0.1kg_commensurateQ_trial5_SUCCESS-83s.mp4) |
+
+## Single-obstacle scenario (true OIM T + exponential obstacle cost)
+
+**Setup.** OIM benchmark `single_obstacle`: the source scene's static 0.1 m
+cube placed at the start→goal midpoint (0.5, 0.0), physically welded in the
+sim. Scenario definitions are factored per demo into
+`parameters/scenario_params.yaml` (scenario name, obstacle disc list
+[x, y, r], cost weight/decay, obstacle SDF), loaded through
+`scenario_params_file` in the controller params and consumed by both the
+planner and the simulator — obstacle-free demos are untouched.
+
+**Cost shaping.** Every candidate sample's predicted object path pays an
+exponential proximity penalty per knot and per obstacle:
+
+    cost += w_obs · exp(−(‖p_obj,xy − p_obs,xy‖ − r_obs) / d_decay)
+
+with w_obs = 20000, r_obs = 0.0707 (circumscribing the square footprint),
+d_decay = 0.02 m. Demos: `push_t_oimT_m01_obst_{nativeQ,scaledQ}`.
+
+**Results (n = 5 success-terminated trials per arm, 1500 s wall caps):**
+
+| Arm | success_rate | outcome detail |
+|---|---|---|
+| scaledQ | **1/5** (69.8 s — obstacle-free speed) | 4 × "doorstep" stall: rotation complete (θ 0.01–0.33), object parked ≈ 0.35 m out just north of the cube |
+| nativeQ | 0/5 | 2 × far stall (θ ≈ 2.76, barely rotated) + 3 × doorstep-adjacent |
+
+Obstacle-free baseline on the same object: scaledQ 4/5, nativeQ 3/5.
+
+**Diagnosis.** The exponential term does its half of the job perfectly —
+no trial ever drove the T into the cube; plans through the obstacle are
+priced out. What is missing is the other half: the goal generator's
+lookahead sub-goal still points straight through the obstacle, so C3's
+best straight pushes are vetoed by the barrier while the sampler settles
+into safe-but-unproductive choices — a barrier-induced local minimum at
+the obstacle's doorstep. The single success is a draw whose early pushes
+happened to compose a lateral detour before reaching the doorstep.
+scaledQ retains its reliability edge (only arm to succeed; its failures
+die closer, with rotation already complete).
+
+**Cost-only remedy (per the design intent — the cost field must steer, not
+just veto):** with decay 0.02 m the exponential is ~flat at doorstep
+distances, so all candidates pay a near-equal tax and the sampler cannot
+distinguish lateral-escape pushes from holding; the plateaued cost also
+trips the progress checker into reposition churn. Lengthening
+`obstacle_cost_decay` to 0.06 m extends the gradient to 5–10 cm
+clearances so detour plans price measurably cheaper. Re-run in the
+`c3ab_obst2_*` ledgers (results appended below when complete).
+
 ## Conclusions (final)
 
 1. **The OIM-style goal is not a blocker.** Every capable object makes
