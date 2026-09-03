@@ -170,6 +170,53 @@ the 0.05 kg (works) and 1 kg (fails) regimes, much closer to 0.05 kg; the
 reference stack with either Q is likely capable, with the rule-derived Q
 the principled default.
 
+## Settled: the true OIM T, and the gyration-commensurate Q
+
+**Terminology.** The "rule Q" is henceforth the **gyration-commensurate Q**
+(`commensurateQ` in demo/ledger names): object orientation weight scaled so
+q_θ/q_pos = ρ_g² relative to the tuned native baseline
+(quat 1000 → 260, object angular-velocity 0.05 → 0.013 for the OIM
+geometry; w_Q and R unchanged). Demo dirs renamed accordingly
+(`push_t_oimdimsT_1kg_commensurateQ`, `push_t_oimdimsT_m005_{nativeQ,commensurateQ}`,
+`push_t_oimT_m01_{nativeQ,commensurateQ}`).
+
+**The settling experiment.** The *true* OIM T — exact OIM dimensions AND
+exact OIM mass 0.1 kg (link masses 0.0529/0.0471, inertias ×0.1) — on the
+OIM-style goal, n = 5 success-terminated trials per Q arm:
+
+| Arm | success_rate | success times (sim s) | success errors (m / rad) | mean_steps_to_goal_success |
+|---|---|---|---|---|
+| **commensurateQ** | **4/5** | 56.0, 63.5, 82.8, 121.3 | 0.0155 ± 0.0034 / 0.0385 ± 0.0222 | 809 |
+| nativeQ | 3/5 | 78.3, 82.9, 98.7 | 0.0138 ± 0.0066 / 0.0503 ± 0.0300 | 866 |
+
+Full-schema aggregates: `c3ab_oimT_m01_{commQ,natQ}_trials_result.json`.
+
+**Finding.** The reference C3+ stack solves the true OIM T task reliably at
+its real mass; the earlier total failure of the OIM geometry was a 1 kg
+artifact. Between the Q designs, success speed is indistinguishable
+(≈ 56–121 s either way); the difference is **reliability**. Pooled over the
+two light-mass OIM-geometry objects (0.05 + 0.1 kg):
+
+| Arm | pooled successes |
+|---|---|
+| commensurateQ | **7/8** |
+| nativeQ | 5/8 |
+
+Each nativeQ failure is a hard stall; commensurateQ had one. Combined with
+the 1 kg matched control (where commensurateQ *hurt* rotation:
+θ 1.11 ± 0.72 vs 0.55 ± 0.08), the picture is a clean interaction that the
+generating rule itself predicts via its force-headroom caveat:
+
+- **ample force headroom (light object):** commensurate weights suffice and
+  remove the over-driven-rotation stall mode — equal speed, better
+  reliability; use **commensurateQ**.
+- **scarce headroom (heavy object):** the ×1049 orientation task-statement
+  overweight is load-bearing drive; keep **nativeQ** — though neither Q
+  succeeds there, as translation throughput binds first.
+
+n = 3–5 per cell: directions are consistent across three object masses,
+but individual comparisons are not statistically significant.
+
 ## Conclusions
 
 1. **The OIM-style goal is not the blocker.** The native T makes major,

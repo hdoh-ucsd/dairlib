@@ -1,11 +1,11 @@
-sampling_c3_options_file: examples/sampling_c3/push_t_exp5rule/parameters/sampling_c3plus_options.yaml
-reposition_params_file: examples/sampling_c3/push_t_exp5rule/parameters/reposition_params.yaml
-progress_params_file: examples/sampling_c3/push_t_exp5rule/parameters/progress_params_c3plus.yaml
-sampling_params_file: examples/sampling_c3/push_t_exp5rule/parameters/sampling_params.yaml
-goal_params_file: examples/sampling_c3/push_t_exp5rule/parameters/goal_params.yaml
+sampling_c3_options_file: examples/sampling_c3/push_t_oimdimsT_m005_nativeQ/parameters/sampling_c3plus_options.yaml
+reposition_params_file: examples/sampling_c3/push_t_oimdimsT_m005_nativeQ/parameters/reposition_params.yaml
+progress_params_file: examples/sampling_c3/push_t_oimdimsT_m005_nativeQ/parameters/progress_params_c3plus.yaml
+sampling_params_file: examples/sampling_c3/push_t_oimdimsT_m005_nativeQ/parameters/sampling_params.yaml
+goal_params_file: examples/sampling_c3/push_t_oimdimsT_m005_nativeQ/parameters/goal_params.yaml
 
-sim_params_file: examples/sampling_c3/push_t_exp5rule/parameters/sim_params.yaml
-vis_params_file: examples/sampling_c3/push_t_exp5rule/parameters/vis_params.yaml
+sim_params_file: examples/sampling_c3/push_t_oimdimsT_m005_nativeQ/parameters/sim_params.yaml
+vis_params_file: examples/sampling_c3/push_t_oimdimsT_m005_nativeQ/parameters/vis_params.yaml
 osc_params_file: examples/sampling_c3/shared_parameters/osc_params.yaml
 osqp_settings_file: examples/sampling_c3/shared_parameters/sampling_c3_qp_settings.yaml
 osc_qp_settings_file: examples/sampling_c3/shared_parameters/osc_qp_settings.yaml
