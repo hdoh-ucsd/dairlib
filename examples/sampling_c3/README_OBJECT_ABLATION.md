@@ -77,18 +77,18 @@ Two repairs were required to make the *stock* reference demo run at all
 Successes at 47.7 s and 67.6 s sim; two near-miss failures (~0.32–0.35 m,
 0.6–0.7 rad remaining, still progressing at cap) and one stalled draw.
 
-**exp1 — native 1 kg T + OIM goal (n = 3 of 5 at time of writing, cap ≈ 1290 s sim):**
+**exp1 — native 1 kg T + OIM goal (n = 5, cap ≈ 1300–1420 s sim): 0/5.**
 
 ```json
-{"n_trials": 3, "success_rate": 0.0,
- "pos_err_mean": 0.3838, "pos_err_std": 0.0537,
- "theta_err_mean": 0.8784, "theta_err_std": 0.9468,
- "mean_execution_time": 1292.8, "mean_steps_to_goal": 12927.7}
+{"n_trials": 5, "success_rate": 0.0,
+ "pos_err_mean": 0.382, "pos_err_std": 0.046,
+ "theta_err_mean": 1.092, "theta_err_std": 0.781,
+ "mean_execution_time": 1328.6, "mean_steps_to_goal": 13285.8}
 ```
 
-Two draws end at ~0.34–0.35 m / ~0.21 rad (most of the π rotation done,
-translation stalled); one bad draw (0.46 m / 2.22 rad). Trials 4–5 append to
-the same ledger when their lane completes.
+Answer to "does the native T succeed on OIM goals?": **no** — every trial
+progresses (two finish the rotation, θ ≈ 0.20), and all five stall at a
+consistent 0.34–0.46 m translation residual around mid-path (y ≈ 0).
 
 **Axis-matched variants (n = 3 each, 1 kg, cap ≈ 600 s sim) — all 0/3:**
 
@@ -97,6 +97,39 @@ the same ledger when their lane completes.
 | T_x (×0.371) | 0.499 ± 0.082 | 2.138 ± 0.915 | 0.600 / 3.142 (zero progress) |
 | T_y (×0.620) | 0.406 ± 0.031 | **1.179 ± 0.418** | 0.441 / 1.663 |
 | T_z (×1.49)  | 0.451 ± 0.020 | 1.982 ± 0.149 | 0.468 / 2.096 |
+
+## Principled Q/R generating rule — derivation validated, intervention refuted
+
+A generating rule was proposed: Q_obj ∝ blkdiag(I_obj, m·I₃) (so
+q_θ/q_pos = ρ_g²), q/r ∝ m^α (α∈[1,2] by force headroom), R fixed from
+u_max, q_pos from task tolerance.
+
+**Structural validation.** Native Push-T: ρ_g = 0.069 m, ρ_g² = 0.00477 →
+commensurate quaternion weight = q_pos·ρ_g² = 200×0.00477 = **0.95 ≈ 1**,
+exactly as the rule derives; the shipped
+`q_quaternion_dependent_weight: 1000` is a deliberate ×1049 orientation
+"task statement". The OIM-geometry T (both 1 kg and the true 0.1 kg — they
+are geometrically similar) has ρ_g = 0.0352 m, ρ_g² = 0.00124, giving a
+rule-preserving rescale of quat 1000 → **260** and object angular-velocity
+weight 0.05 → **0.013**. Mass: exp3 (0.05 kg, unchanged w_Q, 2/5 success)
+empirically supports α → 0 when force headroom is large; R untouched.
+
+**Matched-protocol test (exp4 vs exp2 control; OIM-dims T, n = 3 each,
+≈ 710 s sim, only the two weights differ):**
+
+| Config | pos_err | theta_err |
+|---|---|---|
+| exp2 control (native Q, quat 1000) | 0.436 ± 0.029 | **0.545 ± 0.082** |
+| exp4 (rule Q, quat 260, ω 0.013)   | 0.457 ± 0.057 | 1.112 ± 0.725 |
+
+The rescale did **not** help: rotation got worse and less consistent, and
+translation was unchanged. (The 2.22 rad exp2 screening figure that
+motivated the test was a short-window draw artifact — hence the matched
+control.) Reading: the ×1049 overweight is load-bearing rotation *drive*
+at every scale, not native-scale tuning noise; and rotation is not the
+binding constraint anyway — **translation is**: native-Q small T, rule-Q
+small T, and the native big T all stall at ≈ 0.34–0.46 m residual on the
+0.6 m goal.
 
 ## Conclusions
 
@@ -113,7 +146,11 @@ the same ledger when their lane completes.
    T_y (mildest, θ≈1.18) < T_z (θ≈1.98) ≈ T_x (θ≈2.14) — note the axis
    scale magnitudes differ (0.62 / 1.49 / 0.371), so severity tracks the
    size of the geometric change, not a privileged axis.
-4. Practical implication for OIM transfer: adaptation effort should target
+4. On OIM-style long goals, the dominant failure in this stack is
+   **translation throughput** — a consistent ≈ 0.4 m stall across object
+   scales and Q choices — so cost-matrix work should target translation
+   progress (or the reposition/push cadence), not the rotation balance.
+5. Practical implication for OIM transfer: adaptation effort should target
    the geometry coupling (contact sampling standoffs, pusher-to-feature
    scale ratios, and drift-per-rotation kinematics of small footprints) —
    not the cost function's mass/goal terms. Similarity-scaled costs are
