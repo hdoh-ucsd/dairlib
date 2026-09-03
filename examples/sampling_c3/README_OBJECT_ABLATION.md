@@ -35,6 +35,20 @@ Two repairs were required to make the *stock* reference demo run at all
    only): `ee_z_close: false` (push_t-era semantics). After the fix the stock
    control makes contact and pushes (12–77 C3-mode entries per run).
 
+## Demo directory names
+
+The original exp numbering is kept in result artifacts; the repo demo dirs
+now carry task-specific names:
+
+| Old | New | Task |
+|---|---|---|
+| `push_t_exp1` | `push_t_nativeT_oimgoal` | native 1 kg T, OIM-style 0.6 m + π goal |
+| `push_t_exp2` | `push_t_oimdimsT_1kg` | OIM-dimension T at 1 kg, OIM-style goal |
+| `push_t_exp3m05` | `push_t_nativeT_m005` | native-shape T at 0.05 kg, OIM-style goal |
+
+(`push_t_exp0` control, `push_t_exp4` rule-Q, and the `push_t_exp5*`
+light-OIM-dims pair keep their names; `--demo_name` accepts any `push_t*`.)
+
 ## Objects
 
 | Variant | Boxes (m) | Mass | Izz vs native |
