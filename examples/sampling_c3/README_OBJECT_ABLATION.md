@@ -473,6 +473,67 @@ task pushes a C-shaped 2 kg sign into a slot, which this sweep does not
 reproduce — treat our 3/3 as a long-diagonal open-table variant, not the
 benchmark task.
 
+## How the cost functions are defined, per scenario
+
+Four layers, from the QP outward. Layers 0–1 are identical in every
+scenario; layer 2 is the scenario; layer 3 is the object/Q configuration.
+
+**Layer 0 — the C3 solve (contact-implicit MPC).** Per knot i of horizon
+N = 5: `γ^i (x_i − x_des)ᵀ Q (x_i − x_des) + γ^{i+1} u_iᵀ R u_i` plus the
+ADMM matrices G (consensus) and U (projection), γ = 1. Two complete cost
+*sets* exist and the controller switches between them by distance to
+goal (`cost_switching_threshold_distance` = 0.50 m, summed over objects):
+
+- **Position regime** (far): `w_Q_position · q_vector_position`
+  (object position 250,250,250), `planning_dt` = 0.10 s, quaternion block
+  inert (0.1 placeholders), G/U from the `*_position_list`s.
+- **Pose regime** (near): `w_Q · q_vector` (object position 200,200,120 —
+  or the raised variants below), `planning_dt` = 0.05 s, and the
+  quaternion block is **rebuilt every solve** as
+  `w_quat · [∇²θ²(q, q_des) + PSD shift]` — the Gauss–Newton model of the
+  squared geodesic angle.
+
+The regime boundary is behaviorally loud: the 28-run mid-path failure
+band (0.35–0.48 m) brackets the 0.50 m switch, where the objective gains
+rotation pressure and halves its planning dt simultaneously.
+
+**Layer 1 — sample scoring & mode economics (all scenarios).** Each
+candidate EE placement gets a C3 solve whose plan is re-simulated
+(`cost_type 5`, impedance rollout, object terms only) →
+`all_sample_costs[i] = rollout_cost + travel_cost_per_meter·d_xy (=0)
+[+ finished_reposition_cost when a reposition just completed]`. Mode
+switching (C3 ↔ reposition) runs on these scores through *relative*
+hysteresis fractions (0.3–0.9), so all layers' costs also govern when the
+controller pushes vs relocates.
+
+**Layer 2 — the scenario term (`scenario_params.yaml` per demo).**
+`Σ_knots Σ_obs w_obs · exp(−(‖p_obj,xy − p_o‖ − r_o)/d_decay)` added to
+layer-1 scores over the predicted object path. Per scene:
+
+| Scene | obstacle discs [x, y, r] | w_obs | decay |
+|---|---|---|---|
+| open_table | — | 0 | — |
+| single_obstacle | (0.5, 0, 0.0707) | 5000 | 0.04 |
+| shelf_gap | 3 discs @ x=0.73 (r 0.133) + 2 @ x=0.35 (r 0.064) | 5000 | 0.04 |
+| ycb_clutter | (0.5, 0, 0.0707) + (0.37, 0.20, 0.0996) | 5000 | 0.04 |
+| icra_sign | — | 0 | — |
+
+Field-shape calibration is empirical and documented above: decay 0.02 =
+veto-only; 0.06 @ w=20000 = start-frozen; 0.04 @ w=5000 = three-zone.
+
+**Layer 3 — Q configurations under test (pose regime, object block).**
+
+| Config | obj pos diag (×w_Q=50) | quat weight | q_ω |
+|---|---|---|---|
+| nativeQ | 200,200,120 | 1000 | 0.05 |
+| scaledQ | 200,200,120 | 260 (ρ_g²-commensurate) | 0.013 |
+| q510 (tuned) | 200,200,120 | 510 | 0.013 |
+| q510p15 (trial) | 300,300,180 | 510 | 0.013 |
+| q510p2 (trial) | 400,400,240 | 510 | 0.013 |
+
+The p15/p2 variants raise position dominance across the 0.5 m switch to
+attack the mid-path stall cluster (>90 % SR campaign, in progress).
+
 ## Conclusions (final)
 
 1. **The OIM-style goal is not a blocker.** Every capable object makes
