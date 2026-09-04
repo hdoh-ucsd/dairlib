@@ -239,7 +239,7 @@ int DoMain(int argc, char* argv[]) {
         SortedPair(contact_geoms["TOP_RIGHT_SPHERE"], contact_geoms["GROUND"]));
     ground_object_contact_pairs.push_back(
         SortedPair(contact_geoms["BOTTOM_SPHERE"], contact_geoms["GROUND"]));
-  } else if (FLAGS_demo_name == "anything") {
+  } else if (FLAGS_demo_name.rfind("anything", 0) == 0) {
     if (sampling_c3_options.include_walls) {
       drake::geometry::GeometryId left_wall_geoms =
           plant_lcs.GetCollisionGeometriesForBody(
@@ -402,7 +402,7 @@ int DoMain(int argc, char* argv[]) {
     // planar single-object demo wiring; parameters differ per demo dir.
     target_generator = std::make_unique<systems::SamplingC3GoalGeneratorPlanar>(
         plant_object, controller_params.goal_params, object_indices);
-  } else if (FLAGS_demo_name == "anything") {
+  } else if (FLAGS_demo_name.rfind("anything", 0) == 0) {
     target_generator = std::make_unique<systems::SamplingC3GoalGeneratorPlanar>(
         plant_object, controller_params.goal_params, object_indices);
 

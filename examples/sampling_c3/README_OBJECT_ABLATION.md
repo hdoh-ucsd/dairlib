@@ -534,6 +534,35 @@ veto-only; 0.06 @ w=20000 = start-frozen; 0.04 @ w=5000 = three-zone.
 The p15/p2 variants raise position dominance across the 0.5 m switch to
 attack the mid-path stall cluster (>90 % SR campaign, in progress).
 
+## The >90 % Q-only campaign: exhausted, verdict negative
+
+Target: success rate > 90 % on open_table (best object) by tuning Q only.
+Sweep (all success-terminated trials):
+
+| Config | quat | obj pos (pose set) | n | SR |
+|---|---|---|---|---|
+| scaledQ | 260 | 200,200,120 | 28 | 64.3 % |
+| **q510** | **510** | 200,200,120 | 14 (+7 matched-load control: 5/7) | **71.4 %** |
+| nativeQ | 1000 | 200,200,120 | 3 | 67 % |
+| q510p15 | 510 | 300,300,180 | 7 | 0 % |
+| q510p2 | 510 | 400,400,240 | 7 | 29 % |
+| q510align | 510 | 200,200,120 + aligned position regime | 7 | 71 % (tie) |
+
+Findings: (1) quat 510 is the optimum of the orientation-drive axis —
+eliminates the near-goal miss cluster and halves median time-to-goal;
+(2) raising pose-set position weights is sharply harmful (they enlarge
+the 0.5 m regime discontinuity); (3) removing the discontinuity entirely
+(q510align) changes nothing — the mid-path stall (~29 % of draws,
+failures at 0.35–0.48 m) is invariant across every Q axis tested.
+
+**Verdict: > 90 % is not achievable through Q alone.** The residual
+failure mode lives in the mode-economics layer (reposition churn and
+unsuccessful-sample-buffer exhaustion around the cost-set switch), which
+the weights do not reach. Tuned recommendation stands at **q510**
+(`push_t_bestT_open_table_q510`); the next lever is the progress/
+switching layer (e.g., graded cost-set blending or stall-aware sample
+recovery), outside this campaign's Q-only scope.
+
 ## Conclusions (final)
 
 1. **The OIM-style goal is not a blocker.** Every capable object makes
