@@ -1,7 +1,11 @@
 #include "systems/controllers/osc/operational_space_control.h"
 
 #include <cmath>
+#include <array>
+#include <cstdio>
+#include <cstdlib>
 #include <iostream>
+#include <sstream>
 
 #include <drake/multibody/plant/multibody_plant.h>
 
@@ -37,6 +41,52 @@ using drake::trajectories::PiecewisePolynomial;
 using drake::solvers::OsqpSolver;
 using drake::solvers::OsqpSolverDetails;
 using drake::solvers::Solve;
+
+// ---------------------------------------------------------------------------
+// OPTIONAL arm-link obstacle velocity damper (Stage 2.4; NOT the frozen
+// baseline). Env-gated: with SAMPLING_OSC_ARM_DAMPER unset the OSC QP is
+// byte-identical to the baseline. Adds a FIXED number of linear inequality
+// constraints on the acceleration variables dv (constant QP sparsity -> solver
+// initializes once): n^T J_link dv >= [-alpha (d - margin) - n^T J_link v]/dt,
+// a discrete velocity damper / CBF that lets a link approach an obstacle only in
+// proportion to its clearance. Witness points are representative arm-link
+// origins (the OSC plant has no obstacle geometry) — a documented approximation.
+// ---------------------------------------------------------------------------
+namespace {
+struct OscDamperCfg {
+  bool enabled = false;
+  double alpha = 5.0, margin = 0.02, activation = 0.08, dt = 0.005;
+  double link_radius = 0.06;
+  std::vector<std::array<double, 3>> obstacles;  // (x,y,r)
+  std::vector<std::string> links = {"panda_link5", "panda_link6", "panda_link7"};
+  bool loaded = false;
+};
+inline OscDamperCfg& DamperCfg() {
+  static OscDamperCfg c;
+  if (!c.loaded) {
+    c.loaded = true;
+    const char* en = std::getenv("SAMPLING_OSC_ARM_DAMPER");
+    if (en && std::string(en) == "1") c.enabled = true;
+    const char* ob = std::getenv("SAMPLING_OSC_OBSTACLES");
+    if (ob) {
+      std::string obs_str(ob);
+      std::stringstream ss(obs_str);
+      std::string tok;
+      while (std::getline(ss, tok, ';')) {
+        double x, y, r;
+        if (std::sscanf(tok.c_str(), "%lf,%lf,%lf", &x, &y, &r) == 3)
+          c.obstacles.push_back({x, y, r});
+      }
+    }
+    const char* al = std::getenv("SAMPLING_OSC_ALPHA");
+    if (al) c.alpha = std::atof(al);
+    const char* mg = std::getenv("SAMPLING_OSC_MARGIN");
+    if (mg) c.margin = std::atof(mg);
+  }
+  return c;
+}
+constexpr int kNDamper = 4;  // fixed damper-constraint count (constant sparsity)
+}  // namespace
 
 namespace dairlib::systems::controllers {
 
@@ -553,6 +603,63 @@ VectorXd OperationalSpaceControl::SolveQp(
     id_qp_.UpdateCost("lambda_h_reg", (1 + alpha) * W_lambda_h_reg_,
                       VectorXd::Zero(id_qp_.nh()));
   }
+  // ---- Stage 2.4: arm-link obstacle velocity damper (env-gated) ----
+  // Fixed kNDamper linear inequalities on dv, added once (constant sparsity),
+  // coefficients updated each cycle from the nearest link<->obstacle pairs.
+  static std::vector<
+      drake::solvers::Binding<drake::solvers::LinearConstraint>>
+      damper_bindings;
+  if (DamperCfg().enabled && !DamperCfg().obstacles.empty()) {
+    const auto& dc = DamperCfg();
+    if (damper_bindings.empty()) {
+      for (int j = 0; j < kNDamper; j++) {
+        Eigen::RowVectorXd A0 = Eigen::RowVectorXd::Constant(n_v_, 1e-9);
+        damper_bindings.push_back(id_qp_.get_mutable_prog().AddLinearConstraint(
+            A0, -1e9, 1e9, id_qp_.dv()));
+      }
+    }
+    VectorXd vjt = x_w_spr.tail(n_v_);
+    int slot = 0;
+    for (const auto& ln : dc.links) {
+      if (slot >= kNDamper) break;
+      if (!plant_.HasBodyNamed(ln)) continue;
+      const auto& body = plant_.GetBodyByName(ln);
+      Eigen::Vector3d pw =
+          plant_.EvalBodyPoseInWorld(*context_, body).translation();
+      double bestd = 1e9;
+      Eigen::Vector3d bn(0, 0, 0);
+      bool found = false;
+      for (const auto& o : dc.obstacles) {
+        double dd = std::hypot(pw(0) - o[0], pw(1) - o[1]);
+        double d = dd - o[2] - dc.link_radius;
+        if (dd > 1e-9 && d < bestd) {
+          bestd = d;
+          bn = Eigen::Vector3d((pw(0) - o[0]) / dd, (pw(1) - o[1]) / dd, 0);
+          found = true;
+        }
+      }
+      if (found && bestd < dc.activation) {
+        Eigen::MatrixXd J(3, n_v_);
+        plant_.CalcJacobianTranslationalVelocity(
+            *context_, JacobianWrtVariable::kV, body.body_frame(),
+            Eigen::Vector3d::Zero(), plant_.world_frame(), plant_.world_frame(),
+            &J);
+        Eigen::RowVectorXd A = bn.transpose() * J;
+        for (int q = 0; q < n_v_; q++)
+          if (std::abs(A(q)) < 1e-12) A(q) = 1e-12;  // keep row dense
+        double Av = (A * vjt)(0);
+        double lb = (-dc.alpha * (bestd - dc.margin) - Av) / dc.dt;
+        damper_bindings[slot].evaluator()->UpdateCoefficients(
+            A, Eigen::VectorXd::Constant(1, lb), Eigen::VectorXd::Constant(1, 1e9));
+        slot++;
+      }
+    }
+    for (; slot < kNDamper; slot++)
+      damper_bindings[slot].evaluator()->UpdateCoefficients(
+          Eigen::RowVectorXd::Constant(n_v_, 1e-9),
+          Eigen::VectorXd::Constant(1, -1e9), Eigen::VectorXd::Constant(1, 1e9));
+  }
+
   if (!solver_->IsInitialized()) {
     solver_->InitializeSolver(id_qp_.get_prog(), solver_options_);
   }

@@ -1,0 +1,6 @@
+scenario_name: icra_sign
+obstacles:
+  []
+obstacle_cost_weight: 0.0
+obstacle_cost_decay: 0.04
+# no static obstacle

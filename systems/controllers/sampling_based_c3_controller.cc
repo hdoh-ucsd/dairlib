@@ -1,7 +1,12 @@
 #include "sampling_based_c3_controller.h"
 
 #include <ctime>
+#include <cmath>
+#include <cstdlib>
+#include <fstream>
+#include <iomanip>
 #include <iostream>
+#include <sstream>
 #include <thread>
 #include <utility>
 
@@ -22,6 +27,7 @@
 
 #include "drake/common/trajectories/piecewise_polynomial.h"
 #include "drake/multibody/plant/multibody_plant.h"
+#include "drake/solvers/cost.h"
 
 namespace dairlib {
 
@@ -49,6 +55,209 @@ using Eigen::VectorXd;
 using Eigen::VectorXf;
 using std::vector;
 using systems::TimestampedVector;
+
+// ---------------------------------------------------------------------------
+// Read-only cost instrumentation (PASSIVE). Activated only when the environment
+// variable SAMPLING_C3_COST_LOG_DIR is set; otherwise every hook is a no-op and
+// the controller runs exactly as the frozen baseline. Writes four files:
+//   controller_cycle_costs.csv, candidate_ranking_costs.csv,
+//   selected_candidate_qp_costs.csv, selected_candidate_qp_variables.jsonl
+// No control-flow, no optimization input, and no member used by the controller
+// is modified here. The instrumentation only READS solved quantities.
+// ---------------------------------------------------------------------------
+namespace {
+class CostLogger {
+ public:
+  static CostLogger& Get() {
+    static CostLogger inst;
+    return inst;
+  }
+  bool active() const { return active_; }
+  std::ofstream cyc, cand, qp, qpv, innerobs, pushfilt, swept;
+  int event_id = 0;
+
+ private:
+  bool active_ = false;
+  CostLogger() {
+    const char* dir = std::getenv("SAMPLING_C3_COST_LOG_DIR");
+    if (dir == nullptr || dir[0] == '\0') return;
+    std::string d(dir);
+    cyc.open(d + "/controller_cycle_costs.csv");
+    cand.open(d + "/candidate_ranking_costs.csv");
+    qp.open(d + "/selected_candidate_qp_costs.csv");
+    qpv.open(d + "/selected_candidate_qp_variables.jsonl");
+    innerobs.open(d + "/inner_qp_obstacle_terms.csv");
+    pushfilt.open(d + "/candidate_collision_filter.csv");
+    pushfilt << std::setprecision(9)
+             << "time,event_id,candidate_id,ee_x,ee_y,ee_z,closest_obstacle_x,"
+                "closest_obstacle_y,pusher_signed_distance,margin,rejection_reason\n";
+    swept.open(d + "/reposition_swept_collision.csv");
+    swept << std::setprecision(9)
+          << "reposition_event_id,n_samples,min_pusher_swept_distance,margin,"
+             "worst_ee_x,worst_ee_y,safe\n";
+    if (!cyc || !cand || !qp || !qpv || !innerobs || !pushfilt || !swept) return;
+    innerobs << std::setprecision(9);
+    innerobs << "time,event_id,candidate_id,inner_mode,rank_mode,"
+                "nom_term_x,nom_term_y,mod_term_x,mod_term_y,"
+                "nom_min_clr,mod_min_clr,nom_dy_toward_goal,mod_dy_toward_goal,"
+                "sum_obs_approx_cost,max_trust_step,trust_exceeded,"
+                "max_hessian_eig\n";
+    cyc << std::setprecision(10);
+    cand << std::setprecision(10);
+    qp << std::setprecision(10);
+    cyc << "time,scene,is_c3_mode,mode_switch_reason,obj_x,obj_y,obj_yaw,"
+           "subgoal_x,subgoal_y,subgoal_yaw,xy_err_subgoal,yaw_err_subgoal,"
+           "switch_crossed,num_candidates,selected_id,sel_ee_x,sel_ee_y,sel_ee_z,"
+           "sel_qp_total,sel_rank_total,sel_obstacle_cost,finished_reposition_flag\n";
+    cand << "time,event_id,candidate_id,ee_x,ee_y,ee_z,ee_rel_cx,ee_rel_cy,"
+            "pred_term_obj_x,pred_term_obj_y,pred_term_obj_yaw,"
+            "pred_term_xy_err,pred_term_yaw_err,J_rank_position,"
+            "J_rank_orientation,J_rank_angular_velocity,J_rank_linear_velocity,"
+            "J_rank_c3cost,J_rank_obstacle_total,J_rank_travel,"
+            "J_rank_reposition_penalty,J_rank_reconstructed_total,"
+            "J_rank_code_total,diff,selected,rejection_reason\n";
+    qp << "time,event_id,candidate_id,knot_k,J_EE_position,J_object_orientation,"
+          "J_object_position,J_EE_velocity,J_object_angular_velocity,"
+          "J_object_linear_velocity,J_state_solverform,J_state_physical,"
+          "J_state_solver_eval,J_input,J_admm_lambda,J_admm_eta,"
+          "J_qp_knot_total,cumulative_qp_total\n";
+    active_ = true;
+  }
+};
+
+// Yaw (rad) from a [w,x,y,z] quaternion slice.
+inline double YawWXYZ(double w, double x, double y, double z) {
+  return std::atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z));
+}
+
+// ---------------------------------------------------------------------------
+// OPTIONAL inner-QP obstacle-cost extension (NOT the frozen baseline).
+// Env-gated so that with the default (mode "none") the generated QP and all
+// controller behavior are byte-identical to the baseline. Two obstacle models:
+//   - "exponential_psd"    : local PSD-quadratic of w*exp(-d/sigma)
+//   - "inverse_square_psd" : local PSD-quadratic of k_inv/(d+eps_inv)^2
+// The RANKING obstacle potential is selected separately ("exponential" |
+// "inverse_square"); it stays the EXACT nonlinear value (never the QP approx).
+// ---------------------------------------------------------------------------
+enum class ObsInner { kNone, kExpPsd, kInvSqPsd };
+enum class ObsRank { kExp, kInvSq };
+struct ObsExtConfig {
+  ObsInner inner = ObsInner::kNone;
+  ObsRank rank = ObsRank::kExp;
+  double trust = 0.05;      // trust radius (m) — monitored/logged
+  double eps_rho = 1e-8;    // numerical epsilon in rho_bar = sqrt(r.r + eps^2)
+  double d_ref = 0.05;      // reciprocal-square calibration clearance
+  double recip_min_denom = 0.005;
+  bool nonpen = false;          // Stage 2.1: object-obstacle nonpenetration constraint
+  double nonpen_margin = 0.01;  // object_obstacle.margin
+  bool pusher_filter = false;   // Stage 2.2: pusher-obstacle candidate rejection
+  double pusher_margin = 0.01;  // pusher_obstacle.margin
+  double pusher_radius = 0.025; // conservative pusher-tip sphere radius (m)
+  bool swept_check = false;     // Stage 2.3: reposition swept-path pusher check
+  double swept_res = 0.005;     // reposition_swept_check.spatial_resolution (m)
+  bool loaded = false;
+};
+// T footprint boundary sample points in the object (vertical_link) frame:
+// crossbar box 0.089x0.0198 @ (0,0.0099) + stem box 0.0198x0.0794 @ (0,-0.0397).
+inline const std::vector<std::pair<double, double>>& TFootprint() {
+  static std::vector<std::pair<double, double>> pts = [] {
+    std::vector<std::pair<double, double>> v;
+    auto rect = [&](double cx, double cy, double w, double h) {
+      for (int i = 0; i <= 10; i++) {
+        double a = i / 10.0;
+        v.push_back({cx - w / 2 + a * w, cy - h / 2});
+        v.push_back({cx - w / 2 + a * w, cy + h / 2});
+        v.push_back({cx - w / 2, cy - h / 2 + a * h});
+        v.push_back({cx + w / 2, cy - h / 2 + a * h});
+      }
+    };
+    rect(0.0, 0.0099, 0.089, 0.0198);
+    rect(0.0, -0.0397, 0.0198, 0.0794);
+    return v;
+  }();
+  return pts;
+}
+inline ObsExtConfig& ObsCfg() {
+  static ObsExtConfig c;
+  if (!c.loaded) {
+    c.loaded = true;
+    const char* im = std::getenv("SAMPLING_C3_INNER_OBS_MODE");
+    if (im) {
+      std::string s(im);
+      if (s == "exponential_psd") c.inner = ObsInner::kExpPsd;
+      else if (s == "inverse_square_psd") c.inner = ObsInner::kInvSqPsd;
+    }
+    const char* rm = std::getenv("SAMPLING_C3_RANK_OBS_MODE");
+    if (rm && std::string(rm) == "inverse_square") c.rank = ObsRank::kInvSq;
+    const char* tr = std::getenv("SAMPLING_C3_OBS_TRUST");
+    if (tr) c.trust = std::atof(tr);
+    const char* np = std::getenv("SAMPLING_C3_OBJ_NONPEN");
+    if (np && std::string(np) == "1") c.nonpen = true;
+    const char* nm = std::getenv("SAMPLING_C3_OBJ_MARGIN");
+    if (nm) c.nonpen_margin = std::atof(nm);
+    const char* pf = std::getenv("SAMPLING_C3_PUSHER_FILTER");
+    if (pf && std::string(pf) == "1") c.pusher_filter = true;
+    const char* pm = std::getenv("SAMPLING_C3_PUSHER_MARGIN");
+    if (pm) c.pusher_margin = std::atof(pm);
+    const char* sw = std::getenv("SAMPLING_C3_SWEPT_CHECK");
+    if (sw && std::string(sw) == "1") c.swept_check = true;
+  }
+  return c;
+}
+// reciprocal-square calibration from the exponential (match value+log-slope at
+// d_ref): eps_inv = 2*sigma - d_ref ; k_inv = w*exp(-d_ref/sigma)*(d_ref+eps_inv)^2.
+inline double RecipEpsInv(double sigma, double d_ref) { return 2.0 * sigma - d_ref; }
+inline double RecipKInv(double w, double sigma, double d_ref) {
+  double e = RecipEpsInv(sigma, d_ref);
+  return w * std::exp(-d_ref / sigma) * (d_ref + e) * (d_ref + e);
+}
+// EXACT ranking potential value at signed clearance d (with penetration
+// continuation for the reciprocal-square when d<0).
+inline double ObsPotentialValue(ObsRank mode, double d, double w, double sigma,
+                                double d_ref) {
+  if (mode == ObsRank::kExp) return w * std::exp(-d / sigma);
+  double e = RecipEpsInv(sigma, d_ref), k = RecipKInv(w, sigma, d_ref);
+  if (d >= 0.0) return k / ((d + e) * (d + e));
+  double phi0 = k / (e * e), dp0 = -2 * k / (e * e * e), d2p0 = 6 * k / (e * e * e * e);
+  return phi0 + dp0 * d + 0.5 * d2p0 * d * d;  // 2nd-order continuation
+}
+// Local PSD-quadratic of the chosen INNER potential around p_bar for one disc.
+// Fills phi_bar, g[2] (gradient), H[2x2] (PSD radial). Uses the numerical eps in
+// rho so the gradient is defined even at the disc center.
+inline void ObsLinearize(ObsInner mode, double px, double py, double cx,
+                         double cy, double r, double w, double sigma,
+                         double d_ref, double eps_rho, double* phi,
+                         double g[2], double H[2][2]) {
+  double rx = px - cx, ry = py - cy;
+  double rho = std::sqrt(rx * rx + ry * ry + eps_rho * eps_rho);
+  double nx = rx / rho, ny = ry / rho;
+  double d = rho - r;
+  double phib, dphi, d2phi;  // value, first, second radial derivative
+  if (mode == ObsInner::kExpPsd) {
+    phib = w * std::exp(-d / sigma);
+    dphi = -(phib / sigma);
+    d2phi = phib / (sigma * sigma);
+  } else {  // inverse_square_psd
+    double e = RecipEpsInv(sigma, d_ref), k = RecipKInv(w, sigma, d_ref);
+    if (d >= 0.0) {
+      double s = d + e;
+      phib = k / (s * s);
+      dphi = -2 * k / (s * s * s);
+      d2phi = 6 * k / (s * s * s * s);
+    } else {
+      double e2 = e * e;
+      phib = k / e2 + (-2 * k / (e2 * e)) * d + 0.5 * (6 * k / (e2 * e2)) * d * d;
+      dphi = (-2 * k / (e2 * e)) + (6 * k / (e2 * e2)) * d;
+      d2phi = 6 * k / (e2 * e2);
+    }
+  }
+  *phi = phib;
+  g[0] = dphi * nx; g[1] = dphi * ny;
+  double hc = (d2phi > 0.0 ? d2phi : 0.0);  // PSD radial component only
+  H[0][0] = hc * nx * nx; H[0][1] = hc * nx * ny;
+  H[1][0] = hc * ny * nx; H[1][1] = hc * ny * ny;
+}
+}  // namespace
 
 namespace systems {
 
@@ -1054,7 +1263,128 @@ drake::systems::EventStatus SamplingC3Controller::ComputePlan(
 
     // Solve C3, store resulting object and cost.
     test_c3_object->SetSolverOptions(solver_options_);
-    test_c3_object->Solve(test_state);
+    test_c3_object->Solve(test_state);  // PASS 1 (nominal, obstacle-blind)
+
+    // ---- OPTIONAL inner-QP obstacle-aware refinement (env-gated; PASS 2) ----
+    // With mode "none" this whole block is skipped -> identical to baseline.
+    if ((ObsCfg().inner != ObsInner::kNone || ObsCfg().nonpen) &&
+        controller_params_.scenario_params.obstacle_cost_weight > 0.0 &&
+        !controller_params_.scenario_params.obstacles.empty()) {
+      const auto& scen = controller_params_.scenario_params;
+      const ObsExtConfig& cfg = ObsCfg();
+      auto clr_at = [&](double px, double py) {
+        double m = 1e9;
+        for (const auto& o : scen.obstacles)
+          m = std::min(m, std::hypot(px - o[0], py - o[1]) - o[2]);
+        return m;
+      };
+      // --- nominal (Pass-1) object trajectory p1[k], k=0..N ---
+      auto xs1 = test_c3_object->GetStateSolution();
+      auto us1 = test_c3_object->GetInputSolution();
+      auto ls1 = test_c3_object->GetForceSolution();
+      const LCS& lcsp = test_c3_object->GetLCS();
+      Eigen::VectorXd xN1 = lcsp.A().back() * xs1.back() +
+                            lcsp.B().back() * us1.back() +
+                            lcsp.D().back() * ls1.back() + lcsp.d().back();
+      std::vector<Eigen::Vector2d> p1(N_ + 1);
+      for (int k = 0; k < N_; k++) p1[k] = Eigen::Vector2d(xs1[k](7), xs1[k](8));
+      p1[N_] = Eigen::Vector2d(xN1(7), xN1(8));
+      // --- build & inject the local PSD-quadratic about p1, knots k=1..N ---
+      const auto& cm = test_c3_object->GetCostMatrices();
+      auto xd = test_c3_object->GetDesiredState();
+      const auto& tc = test_c3_object->GetTargetCost();
+      double sum_approx = 0.0, max_heig = 0.0;
+      if (cfg.inner != ObsInner::kNone)
+      for (int k = 1; k <= N_; k++) {
+        double H[2][2] = {{0, 0}, {0, 0}}, g[2] = {0, 0}, phisum = 0;
+        for (const auto& o : scen.obstacles) {
+          double phi, gg[2], HH[2][2];
+          ObsLinearize(cfg.inner, p1[k](0), p1[k](1), o[0], o[1], o[2],
+                       scen.obstacle_cost_weight, scen.obstacle_cost_decay,
+                       cfg.d_ref, cfg.eps_rho, &phi, gg, HH);
+          g[0] += gg[0]; g[1] += gg[1];
+          H[0][0] += HH[0][0]; H[0][1] += HH[0][1];
+          H[1][0] += HH[1][0]; H[1][1] += HH[1][1];
+          phisum += phi;
+        }
+        sum_approx += phisum;
+        max_heig = std::max(max_heig, H[0][0] + H[1][1]);  // trace >= max eig
+        Eigen::MatrixXd Qc = 2.0 * cm.Q[k];
+        Qc(7, 7) += H[0][0]; Qc(7, 8) += H[0][1];
+        Qc(8, 7) += H[1][0]; Qc(8, 8) += H[1][1];
+        Eigen::VectorXd bc = -2.0 * cm.Q[k] * xd[k];
+        bc(7) += g[0] - (H[0][0] * p1[k](0) + H[0][1] * p1[k](1));
+        bc(8) += g[1] - (H[1][0] * p1[k](0) + H[1][1] * p1[k](1));
+        // is_convex=true mirrors the baseline target cost (AddQuadraticCost(...,1)),
+        // which bypasses Drake's re-check of the borderline-indefinite quaternion
+        // Hessian block (regularized in UpdateCostMatrices; OSQP accepts it).
+        tc[k]->UpdateCoefficients(Qc, bc, 0.0, /*is_convex=*/true);
+      }
+      // ---- Stage 2.1: object-obstacle nonpenetration (separating halfspace) ----
+      // For each obstacle, keep the closest T-FOOTPRINT point (not the center)
+      // outside the disc by >= margin: n . p_xy >= n . p_cur + margin - phi.
+      // The disc contains the true box, so this is conservatively safe.
+      double nonpen_min_phi = 1e9;
+      if (cfg.nonpen) {
+        double oy = YawWXYZ(x_lcs_curr(3), x_lcs_curr(4), x_lcs_curr(5),
+                            x_lcs_curr(6));
+        double cs = std::cos(oy), sn = std::sin(oy);
+        double pcx = x_lcs_curr(7), pcy = x_lcs_curr(8);
+        for (const auto& o : scen.obstacles) {
+          double bestphi = 1e9, nx = 0, ny = 0;
+          for (const auto& b : TFootprint()) {
+            double wx = pcx + cs * b.first - sn * b.second;
+            double wy = pcy + sn * b.first + cs * b.second;
+            double dd = std::hypot(wx - o[0], wy - o[1]);
+            double phi = dd - o[2];
+            if (phi < bestphi && dd > 1e-9) {
+              bestphi = phi; nx = (wx - o[0]) / dd; ny = (wy - o[1]) / dd;
+            }
+          }
+          nonpen_min_phi = std::min(nonpen_min_phi, bestphi);
+          Eigen::RowVectorXd A = Eigen::RowVectorXd::Zero(n_x_);
+          A(7) = nx; A(8) = ny;
+          double lb = nx * pcx + ny * pcy + cfg.nonpen_margin - bestphi;
+          test_c3_object->AddLinearConstraint(A, lb, 1e6,
+                                              c3::ConstraintVariable::STATE);
+        }
+      }
+      test_c3_object->Solve(test_state);  // PASS 2 (obstacle-aware / nonpen)
+      // --- modified (Pass-2) object trajectory p2[k] + diagnostics ---
+      auto xs2 = test_c3_object->GetStateSolution();
+      auto us2 = test_c3_object->GetInputSolution();
+      auto ls2 = test_c3_object->GetForceSolution();
+      const LCS& lcsp2 = test_c3_object->GetLCS();
+      Eigen::VectorXd xN2 = lcsp2.A().back() * xs2.back() +
+                            lcsp2.B().back() * us2.back() +
+                            lcsp2.D().back() * ls2.back() + lcsp2.d().back();
+      std::vector<Eigen::Vector2d> p2(N_ + 1);
+      for (int k = 0; k < N_; k++) p2[k] = Eigen::Vector2d(xs2[k](7), xs2[k](8));
+      p2[N_] = Eigen::Vector2d(xN2(7), xN2(8));
+      double max_step = 0.0, nom_mc = 1e9, mod_mc = 1e9;
+      for (int k = 1; k <= N_; k++) {
+        max_step = std::max(max_step, (p2[k] - p1[k]).cwiseAbs().maxCoeff());
+        nom_mc = std::min(nom_mc, clr_at(p1[k](0), p1[k](1)));
+        mod_mc = std::min(mod_mc, clr_at(p2[k](0), p2[k](1)));
+      }
+      if (CostLogger::Get().active()) {
+        const char* im = cfg.inner == ObsInner::kExpPsd ? "exponential_psd"
+                         : cfg.inner == ObsInner::kInvSqPsd ? "inverse_square_psd"
+                         : (cfg.nonpen ? "nonpen_only" : "none");
+        const char* rm = cfg.rank == ObsRank::kExp ? "exponential"
+                                                   : "inverse_square";
+#pragma omp critical
+        {
+          CostLogger::Get().innerobs
+              << 0.0 << "," << CostLogger::Get().event_id << "," << i << ","
+              << im << "," << rm << "," << p1[N_](0) << "," << p1[N_](1) << ","
+              << p2[N_](0) << "," << p2[N_](1) << "," << nom_mc << "," << mod_mc
+              << "," << (p1[0](1) - p1[N_](1)) << "," << (p2[0](1) - p2[N_](1))
+              << "," << sum_approx << "," << max_step << ","
+              << (max_step > cfg.trust ? 1 : 0) << "," << max_heig << "\n";
+        }
+      }
+    }
 
     auto cc_start = std::chrono::high_resolution_clock::now();
     std::pair<double, vector<VectorXd>> cost_trajectory_pair = CalcCost(
@@ -1083,12 +1413,14 @@ drake::systems::EventStatus SamplingC3Controller::ComputePlan(
     const auto& scenario = controller_params_.scenario_params;
     if (scenario.obstacle_cost_weight > 0.0 && !scenario.obstacles.empty()) {
       double obstacle_cost = 0.0;
+      const ObsRank rmode = ObsCfg().rank;  // default kExp == frozen baseline
       for (const VectorXd& xk : cost_trajectory_pair.second) {
         for (const std::vector<double>& obs : scenario.obstacles) {
           const double clearance =
               std::hypot(xk(7) - obs[0], xk(8) - obs[1]) - obs[2];
-          obstacle_cost += scenario.obstacle_cost_weight *
-              std::exp(-clearance / scenario.obstacle_cost_decay);
+          obstacle_cost += ObsPotentialValue(
+              rmode, clearance, scenario.obstacle_cost_weight,
+              scenario.obstacle_cost_decay, ObsCfg().d_ref);
         }
       }
       all_sample_costs_[i] += obstacle_cost;
@@ -1129,6 +1461,35 @@ drake::systems::EventStatus SamplingC3Controller::ComputePlan(
     hyst_repos_to_c3_frac = progress_params_.hyst_repos_to_c3_frac_position;
     hyst_repos_to_repos_frac =
         progress_params_.hyst_repos_to_repos_frac_position;
+  }
+
+  // ---- Stage 2.2: pusher-obstacle candidate filter (env-gated) ----
+  // Reject a contact candidate whose pusher-tip sphere would collide with an
+  // obstacle disc (< pusher_margin). Distinct reason from workspace-radius.
+  if (ObsCfg().pusher_filter &&
+      controller_params_.scenario_params.obstacle_cost_weight > 0.0 &&
+      !controller_params_.scenario_params.obstacles.empty()) {
+    const auto& scen = controller_params_.scenario_params;
+    const double pm = ObsCfg().pusher_margin, pr = ObsCfg().pusher_radius;
+    for (int i = 1; i < (int)all_sample_costs_.size(); i++) {
+      if (i >= (int)candidate_states.size()) continue;
+      double ex = candidate_states[i](0), ey = candidate_states[i](1);
+      double best = 1e9, bcx = 0, bcy = 0;
+      for (const auto& o : scen.obstacles) {
+        double d = std::hypot(ex - o[0], ey - o[1]) - o[2] - pr;
+        if (d < best) { best = d; bcx = o[0]; bcy = o[1]; }
+      }
+      if (best < pm) {
+        all_sample_costs_[i] = 1e12;  // exclude from argmin
+        if (CostLogger::Get().active()) {
+          CostLogger::Get().pushfilt
+              << 0.0 << "," << CostLogger::Get().event_id << "," << i << ","
+              << ex << "," << ey << "," << candidate_states[i](2) << "," << bcx
+              << "," << bcy << "," << best << "," << pm
+              << ",REJECT_PUSHER_OBSTACLE_COLLISION\n";
+        }
+      }
+    }
   }
 
   // Review the cost results to determine the best sample.
@@ -1345,6 +1706,188 @@ drake::systems::EventStatus SamplingC3Controller::ComputePlan(
   double t = context.get_discrete_state(plan_start_time_index_)[0];
   UpdateC3ExecutionTrajectory(x_lcs_curr, t);
   UpdateRepositioningExecutionTrajectory(x_lcs_curr, t);
+
+  // ----- Read-only cost instrumentation (PASSIVE; no-op unless env set) ------
+  // Reconstructs the ranking cost (J_rank) per candidate and the inner QP cost
+  // (J_C3) per knot for the selected candidate, entirely from already-solved
+  // quantities. Nothing here feeds back into the controller.
+  if (CostLogger::Get().active()) {
+    CostLogger& LG = CostLogger::Get();
+    const int eid = LG.event_id++;
+    const auto& scen = controller_params_.scenario_params;
+    const VectorXd xdes = x_lcs_des.get_value();
+    const double ox = x_lcs_curr(7), oy = x_lcs_curr(8);
+    const double oyaw =
+        YawWXYZ(x_lcs_curr(3), x_lcs_curr(4), x_lcs_curr(5), x_lcs_curr(6));
+    const double sgyaw = YawWXYZ(xdes(3), xdes(4), xdes(5), xdes(6));
+
+    // ---- Level B: per-candidate ranking cost, reconstructed from stored XX --
+    const int ncand = (int)all_sample_costs_.size();
+    double sel_obstacle = 0.0;
+    for (int i = 0; i < ncand; i++) {
+      double Jpos = 0, Jori = 0, Jang = 0, Jlin = 0, Jobs = 0;
+      double term_x = xdes(7), term_y = xdes(8), term_yaw = sgyaw;
+      if (i < (int)all_sample_dynamically_feasible_plans_.size()) {
+        const auto& XX = all_sample_dynamically_feasible_plans_[i];
+        for (int k = 0; k < (int)XX.size() && k <= N_; k++) {
+          VectorXd e = XX[k] - xdes;
+          Jori += e.segment(3, 4).dot(Q_[k].block(3, 3, 4, 4) * e.segment(3, 4));
+          Jpos += e.segment(7, 3).dot(Q_[k].block(7, 7, 3, 3) * e.segment(7, 3));
+          Jang +=
+              e.segment(13, 3).dot(Q_[k].block(13, 13, 3, 3) * e.segment(13, 3));
+          Jlin +=
+              e.segment(16, 3).dot(Q_[k].block(16, 16, 3, 3) * e.segment(16, 3));
+          if (scen.obstacle_cost_weight > 0.0) {
+            for (const auto& obs : scen.obstacles) {
+              double cl = std::hypot(XX[k](7) - obs[0], XX[k](8) - obs[1]) -
+                          obs[2];
+              Jobs += scen.obstacle_cost_weight *
+                      std::exp(-cl / scen.obstacle_cost_decay);
+            }
+          }
+        }
+        const VectorXd& xT = all_sample_dynamically_feasible_plans_[i].back();
+        term_x = xT(7);
+        term_y = xT(8);
+        term_yaw = YawWXYZ(xT(3), xT(4), xT(5), xT(6));
+      }
+      double c3cost = Jori + Jpos + Jang + Jlin;
+      double travel = progress_params_.travel_cost_per_meter *
+                      (i < (int)candidate_states.size()
+                           ? (candidate_states[i].head(2) - x_lcs_curr.head(2))
+                                 .norm()
+                           : 0.0);
+      double recon = c3cost + Jobs + travel;
+      double code_total = all_sample_costs_[i];
+      double residual = code_total - recon;
+      double repos_pen = (std::abs(residual) > 1e6) ? residual : 0.0;
+      double recon_full = recon + repos_pen;
+      double ee_x = i < (int)candidate_states.size() ? candidate_states[i](0) : 0;
+      double ee_y = i < (int)candidate_states.size() ? candidate_states[i](1) : 0;
+      double ee_z = i < (int)candidate_states.size() ? candidate_states[i](2) : 0;
+      bool sel = (i == (int)best_sample_index_);
+      if (sel) sel_obstacle = Jobs;
+      const char* rej = sel ? "selected"
+                            : (i == 0 ? "index0_excluded_from_argmin"
+                                      : "higher_cost");
+      LG.cand << t << "," << eid << "," << i << "," << ee_x << "," << ee_y << ","
+              << ee_z << "," << (ee_x - ox) << "," << (ee_y - oy) << ","
+              << term_x << "," << term_y << "," << term_yaw << ","
+              << std::hypot(term_x - xdes(7), term_y - xdes(8)) << ","
+              << std::abs(std::remainder(term_yaw - sgyaw, 2 * M_PI)) << ","
+              << Jpos << "," << Jori << "," << Jang << "," << Jlin << ","
+              << c3cost << "," << Jobs << "," << travel << "," << repos_pen << ","
+              << recon_full << "," << code_total << ","
+              << (code_total - recon_full) << "," << (sel ? 1 : 0) << "," << rej
+              << "\n";
+    }
+
+    // ---- Level C: inner QP cost per knot for the SELECTED candidate ---------
+    double sel_qp_total = 0.0;
+    if (c3_best_plan_ != nullptr) {
+      const C3::CostMatrices& cm = c3_best_plan_->GetCostMatrices();
+      vector<VectorXd> xs = c3_best_plan_->GetStateSolution();
+      vector<VectorXd> us = c3_best_plan_->GetInputSolution();
+      vector<VectorXd> ls = c3_best_plan_->GetForceSolution();
+      vector<VectorXd> xd = c3_best_plan_->GetDesiredState();
+      vector<VectorXd> ds = c3_best_plan_->GetDualDeltaSolution();
+      vector<VectorXd> ws = c3_best_plan_->GetDualWSolution();
+      const std::vector<drake::solvers::QuadraticCost*>& tc =
+          c3_best_plan_->GetTargetCost();
+      const LCS& lcs_plan = c3_best_plan_->GetLCS();
+      VectorXd xN = lcs_plan.A().back() * xs.back() +
+                    lcs_plan.B().back() * us.back() +
+                    lcs_plan.D().back() * ls.back() + lcs_plan.d().back();
+      double cum = 0.0;
+      for (int k = 0; k <= N_; k++) {
+        VectorXd x = (k < N_) ? xs[k] : xN;
+        VectorXd e = x - xd[k];
+        double Jee = e.segment(0, 3).dot(cm.Q[k].block(0, 0, 3, 3) *
+                                         e.segment(0, 3));
+        double Jori = e.segment(3, 4).dot(cm.Q[k].block(3, 3, 4, 4) *
+                                          e.segment(3, 4));
+        double Jop = e.segment(7, 3).dot(cm.Q[k].block(7, 7, 3, 3) *
+                                         e.segment(7, 3));
+        double Jev = e.segment(10, 3).dot(cm.Q[k].block(10, 10, 3, 3) *
+                                          e.segment(10, 3));
+        double Jav = e.segment(13, 3).dot(cm.Q[k].block(13, 13, 3, 3) *
+                                          e.segment(13, 3));
+        double Jlv = e.segment(16, 3).dot(cm.Q[k].block(16, 16, 3, 3) *
+                                          e.segment(16, 3));
+        double Jstate_phys = e.dot(cm.Q[k] * e);
+        double Jstate_solver = x.dot(cm.Q[k] * x) - 2.0 * xd[k].dot(cm.Q[k] * x);
+        double Jstate_eval = std::nan("");
+        if (k < (int)tc.size() && tc[k] != nullptr) {
+          VectorXd yv(1);
+          tc[k]->Eval(x, &yv);
+          Jstate_eval = yv(0);
+        }
+        double Jinput = 0.0;
+        if (k < N_) Jinput = us[k].dot(cm.R[k] * us[k]);
+        // ADMM consensus penalty (best-effort diagnostic; exact QP-objective
+        // augmented term needs solver-internal scaling not exposed read-only).
+        double Jlam = 0.0, Jeta = 0.0;
+        if (k < N_ && k < (int)ds.size() &&
+            ds[k].size() >= n_x_ + n_lambda_) {
+          VectorXd dl = ds[k].segment(n_x_, n_lambda_);
+          MatrixXd Gl = cm.G[k].block(n_x_, n_x_, n_lambda_, n_lambda_);
+          VectorXd rl = ls[k] - dl;
+          Jlam = rl.dot(Gl * rl);
+        }
+        double knot_total = Jstate_solver + Jinput + Jlam + Jeta;
+        cum += knot_total;
+        LG.qp << t << "," << eid << "," << (int)best_sample_index_ << "," << k
+              << "," << Jee << "," << Jori << "," << Jop << "," << Jev << ","
+              << Jav << "," << Jlv << "," << Jstate_solver << "," << Jstate_phys
+              << "," << Jstate_eval << "," << Jinput << "," << Jlam << ","
+              << Jeta << "," << knot_total << "," << cum << "\n";
+        auto js = [](const VectorXd& v) {
+          std::ostringstream o;
+          o << "[";
+          for (int j = 0; j < v.size(); j++)
+            o << (j ? "," : "") << std::setprecision(9) << v(j);
+          o << "]";
+          return o.str();
+        };
+        LG.qpv << "{\"event_id\":" << eid << ",\"k\":" << k << ",\"x\":"
+               << js(x) << ",\"x_des\":" << js(xd[k]);
+        if (k < N_) {
+          LG.qpv << ",\"u\":" << js(us[k]) << ",\"lambda\":" << js(ls[k])
+                 << ",\"delta\":" << js(ds[k]) << ",\"w\":" << js(ws[k]);
+        }
+        LG.qpv << "}\n";
+      }
+      sel_qp_total = cum;
+    }
+
+    // ---- Level A: controller-cycle summary ---------------------------------
+    double ee_sx = (int)best_sample_index_ < (int)candidate_states.size()
+                       ? candidate_states[(int)best_sample_index_](0) : 0;
+    double ee_sy = (int)best_sample_index_ < (int)candidate_states.size()
+                       ? candidate_states[(int)best_sample_index_](1) : 0;
+    double ee_sz = (int)best_sample_index_ < (int)candidate_states.size()
+                       ? candidate_states[(int)best_sample_index_](2) : 0;
+    LG.cyc << t << "," << scen.scenario_name << "," << (is_doing_c3_ ? 1 : 0)
+           << "," << (int)mode_switch_reason_ << "," << ox << "," << oy << ","
+           << oyaw << "," << xdes(7) << "," << xdes(8) << "," << sgyaw << ","
+           << std::hypot(ox - xdes(7), oy - xdes(8)) << ","
+           << std::abs(std::remainder(oyaw - sgyaw, 2 * M_PI)) << ","
+           << (crossed_cost_switching_threshold_ ? 1 : 0) << "," << ncand << ","
+           << (int)best_sample_index_ << "," << ee_sx << "," << ee_sy << ","
+           << ee_sz << "," << sel_qp_total << ","
+           << all_sample_costs_[(int)best_sample_index_] << "," << sel_obstacle
+           << "," << (finished_reposition_flag_ ? 1 : 0) << "\n";
+    // Batched flush (every 100 cycles) to keep per-cycle I/O off the control
+    // loop; streams also flush on normal process exit.
+    if (eid % 20 == 0) {
+      LG.cyc.flush();
+      LG.cand.flush();
+      LG.qp.flush();
+      LG.qpv.flush();
+      LG.innerobs.flush();
+      LG.pushfilt.flush();
+    }
+  }
 
   if (verbose_) {
     std::cout << "x_pred_curr_plan_ after updating: "
@@ -1894,6 +2437,40 @@ void SamplingC3Controller::UpdateRepositioningExecutionTrajectory(
   ee_traj.time_vector = timestamps.cast<double>();
   repos_execution_lcm_traj_.ClearTrajectories();
   repos_execution_lcm_traj_.AddTrajectory(ee_traj.traj_name, ee_traj);
+
+  // ---- Stage 2.3: reposition swept-path pusher collision check (env-gated) ----
+  // Interpolate the EE reposition path at <= swept_res and check the pusher-tip
+  // sphere against every obstacle. Detects an unsafe swept path even when the
+  // endpoint is safe (endpoint-only checking is insufficient). Passive: logs
+  // the swept minimum + a safe flag (conservative "mark unsafe" per spec).
+  // (Full arm-link swept clearance needs per-config FK and is handled at the
+  // OSC layer in Stage 2.4.)
+  if (ObsCfg().swept_check &&
+      controller_params_.scenario_params.obstacle_cost_weight > 0.0 &&
+      !controller_params_.scenario_params.obstacles.empty() &&
+      CostLogger::Get().active()) {
+    const auto& scen = controller_params_.scenario_params;
+    const double pr = ObsCfg().pusher_radius, pm = ObsCfg().pusher_margin;
+    double swmin = 1e9, wx = 0, wy = 0;
+    int nsamp = 0;
+    for (int k = 0; k + 1 < N_; k++) {
+      Eigen::Vector3d a = knots.col(k).head(3), b = knots.col(k + 1).head(3);
+      int steps = std::max(1, (int)std::ceil((b - a).norm() / ObsCfg().swept_res));
+      for (int s = 0; s <= steps; s++) {
+        double u = (double)s / steps;
+        double ex = a(0) + u * (b(0) - a(0)), ey = a(1) + u * (b(1) - a(1));
+        for (const auto& o : scen.obstacles) {
+          double d = std::hypot(ex - o[0], ey - o[1]) - o[2] - pr;
+          if (d < swmin) { swmin = d; wx = ex; wy = ey; }
+        }
+        nsamp++;
+      }
+    }
+    CostLogger::Get().swept << CostLogger::Get().event_id << "," << nsamp << ","
+        << swmin << "," << pm << "," << wx << "," << wy << ","
+        << (swmin >= pm ? 1 : 0) << "\n";
+    CostLogger::Get().swept.flush();
+  }
 
   Eigen::MatrixXd ee_orientations = Eigen::MatrixXd::Zero(4, N_);
 
