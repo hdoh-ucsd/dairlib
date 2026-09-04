@@ -442,6 +442,37 @@ on it isolate scene difficulty from object difficulty: its clean 6/6 on
 obstacle-free scenes certifies that the remaining obstacle-scene failures
 are planning/steering problems, not manipulability problems.
 
+## 28-run open-table campaign and Q retuning (quat 510)
+
+FIG8-style protocol: 28 success-terminated open-table trials of the best
+object (OIM-dims T 0.05 kg) at scaledQ (quat 260), then a data-driven
+retune tested at n = 14.
+
+| Config | n | success | median t-to-goal | steps-to-goal (succ) | failure clusters |
+|---|---|---|---|---|---|
+| scaledQ quat 260 | 28 | 64.3 % | 125.3 s | 1204 | 7 mid-path stalls + **3 near-goal misses** (θ stuck 0.21–0.31) |
+| **tuned quat 510** | 14 | **71.4 %** | **57.5 s** | **771** | 4 mid-path stalls, **0 near-goal misses** |
+
+The near-goal cluster identified the tuning direction: 260 under-drives
+terminal alignment while 1000 over-drives mid-task rotation; the geometric
+mean 510 eliminated the terminal cluster and halved median time-to-goal.
+Success-rate deltas are not individually significant at these n; the
+cluster elimination and the speed shift are the mechanism-consistent
+evidence. **Tuned recommendation: quat 510** (demo
+`push_t_bestT_open_table_q510`); mid-path translation stalls remain the
+Q-invariant residual.
+
+**Native T (1 kg, nativeQ) through single_obstacle (n = 3):** 0/3, pos
+0.390 ± 0.013, θ 0.289 ± 0.105 — the heavy object's translation wall and
+the obstacle doorstep coincide; the exponential field prevented any
+cube contact at 1 kg momentum.
+
+**ICRA-sign caveat:** our icra_sign scene keeps the study's T object with
+the source scene's goal pose (0.5, −0.40, π/2); the original benchmark
+task pushes a C-shaped 2 kg sign into a slot, which this sweep does not
+reproduce — treat our 3/3 as a long-diagonal open-table variant, not the
+benchmark task.
+
 ## Conclusions (final)
 
 1. **The OIM-style goal is not a blocker.** Every capable object makes
