@@ -1,0 +1,7 @@
+# OIM benchmark scene 'open_table' mapped into the reference-stack frame.
+scenario_name: open_table
+obstacles: []
+obstacle_cost_weight: 0.0
+# Three-zone field: negligible at range, steering near, vetoing at contact.
+obstacle_cost_decay: 0.04
+# no static obstacle model

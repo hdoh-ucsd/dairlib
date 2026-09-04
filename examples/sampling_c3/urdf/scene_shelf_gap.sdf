@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<sdf version="1.7">
+  <model name="scene_shelf_gap">
+    <static>true</static>
+    <link name="shelf_big"><pose>0.73 0.0 0.041 0 0 0</pose>
+      <visual name="shelf_big_v"><geometry><box><size>0.26 0.16 0.14</size></box></geometry>
+        <material><diffuse>0.85 0.35 0.1 1.0</diffuse></material></visual>
+      <collision name="shelf_big_c"><geometry><box><size>0.26 0.16 0.14</size></box></geometry></collision>
+    </link>
+    <link name="shelf_small"><pose>0.35 0.0 0.041 0 0 0</pose>
+      <visual name="shelf_small_v"><geometry><box><size>0.10 0.16 0.14</size></box></geometry>
+        <material><diffuse>0.85 0.35 0.1 1.0</diffuse></material></visual>
+      <collision name="shelf_small_c"><geometry><box><size>0.10 0.16 0.14</size></box></geometry></collision>
+    </link>
+  </model>
+</sdf>

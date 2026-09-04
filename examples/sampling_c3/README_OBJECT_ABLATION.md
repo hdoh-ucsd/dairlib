@@ -378,6 +378,70 @@ trips the progress checker into reposition churn. Lengthening
 clearances so detour plans price measurably cheaper. Re-run in the
 `c3ab_obst2_*` ledgers (results appended below when complete).
 
+## Five-scene sweep with the best manipulable object
+
+Object: OIM-dims T at **0.05 kg** with **scaledQ** (the study's only 3/3
+configuration). One demo per OIM benchmark scene
+(`push_t_bestT_<scene>`), scene geometry mapped into the reference frame;
+obstacle scenes use the three-zone exponential field (w = 5000,
+decay = 0.04) over the scenario's disc decomposition.
+
+| Scene | Success | success times (s) | pos_err mean | θ_err mean |
+|---|---|---|---|---|
+| open_table | 3/3 | 86, 134, 102 | 0.019 | 0.037 |
+| single_obstacle | 0/3 | — | 0.391 | 0.603 |
+| shelf_gap | 0/3 | — | 0.418 | 2.091 |
+| ycb_clutter | 0/3 | — | 0.423 | 0.437 |
+| icra_sign | 3/3 | 41, 75, 60 | 0.019 | 0.069 |
+
+**Read:** obstacle-free scenes are solved outright (6/6, 41–134 s;
+icra\_sign — 0.70 m + π/2 — is the fastest task in the study). All three
+obstacle scenes fail 0/3, but close: the best draws finish the rotation
+(ycb\_clutter trial 1 ends at θ = 0.050) and stall on the final routing
+past the statics — the same doorstep local-minimum family as the decay
+sweep, now confirmed scene-independent. The cost-only exponential steers
+and vetoes correctly but composing the *detour push sequence* remains the
+unsolved piece across every static-obstacle layout.
+
+### The four questions
+
+**1. How is the environment SDF implemented?** Physically: each scene is
+a `<static>true</static>` SDF model welded at parse time (e.g.
+`scene_shelf_gap.sdf`) — the sim collides with real geometry. 
+Analytically: the planner uses a disc decomposition of the same statics
+(`obstacles: [[x, y, r], …]` in `scenario_params.yaml`); signed distance
+sd(p) = ‖p_xy − p_o‖ − r per disc, boxes covered by one circumscribed
+disc or several overlapping discs (the shelf pair uses 3+2 so the gap
+survives in the cost field); multi-obstacle cost is the sum of per-disc
+exponentials — a smooth soft-min of the true SDF.
+
+**2. How are cost and actions optimized w.r.t. the scene?** Three nested
+loops. Inner: C3/ADMM solves the contact-implicit QP with x'Qx + u'Ru —
+scene-free, LCS structure fixed. Middle: each candidate sample's solution
+is rolled out and scored: tracking + travel + Σ_knots Σ_obs
+w·exp(−sd/decay) over the predicted object path. Outer: mode selection
+(C3 vs reposition, hysteresis + progress checks) consumes the
+scene-shaped scores. The scene steers action *selection*, never the QP.
+The decay sweep is the proof the field shape governs: 0.02 = veto-only,
+0.06/20k = start-frozen, 0.04/5k = three-zone.
+
+**3. How well does the object work, and why?** Perfect on every
+obstacle-free task (9/9 lifetime: 3/3 + 3/3 here + its original 3/3),
+because at 0.05 kg the force headroom is enormous (~0.2 N friction vs the
+50 N input box) so C3's predictions execute faithfully, per-push
+displacement is large, and scaledQ's ρg²-commensurate weights remove the
+over-rotation stall mode. In obstacle scenes the object is still the
+best performer observed (failures land nearest, rotation complete) but
+no configuration yet composes the final detour.
+
+**4. Why experiment on this object?** It is the bridge object: exact OIM
+benchmark geometry — so member-width/pusher-diameter and
+drift-per-rotation couplings are the real benchmark's — at the mass end
+of the OIM range where the reference method demonstrably works. Results
+on it isolate scene difficulty from object difficulty: its clean 6/6 on
+obstacle-free scenes certifies that the remaining obstacle-scene failures
+are planning/steering problems, not manipulability problems.
+
 ## Conclusions (final)
 
 1. **The OIM-style goal is not a blocker.** Every capable object makes
