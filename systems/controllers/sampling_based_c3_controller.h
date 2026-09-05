@@ -405,6 +405,9 @@ class SamplingC3Controller : public drake::systems::LeafSystem<double> {
   int n_v_;
   int n_x_;
   int n_lambda_;
+  // lcs_contact mode: number of frictionless obstacle-contact slots appended
+  // to lambda/eta (0 when the mode is off -> frozen-baseline dimensions).
+  int n_obs_slots_lcs_ = 0;
   int n_u_;
   int max_num_samples_;
   int N_;

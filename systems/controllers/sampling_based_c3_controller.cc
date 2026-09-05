@@ -73,7 +73,7 @@ class CostLogger {
     return inst;
   }
   bool active() const { return active_; }
-  std::ofstream cyc, cand, qp, qpv, innerobs, pushfilt, swept;
+  std::ofstream cyc, cand, qp, qpv, innerobs, pushfilt, swept, obslcs;
   int event_id = 0;
 
  private:
@@ -91,11 +91,20 @@ class CostLogger {
     pushfilt << std::setprecision(9)
              << "time,event_id,candidate_id,ee_x,ee_y,ee_z,closest_obstacle_x,"
                 "closest_obstacle_y,pusher_signed_distance,margin,rejection_reason\n";
+    obslcs.open(d + "/obstacle_lcs_contacts.csv");
+    obslcs << std::setprecision(9)
+           << "time,event_id,slot,obstacle_id,active,d_raw,phi,witness_obj_x,"
+              "witness_obj_y,witness_obs_x,witness_obs_y,n_x,n_y,com_x,com_y,"
+              "r_x,r_y,r_cross_n,J_wz,J_vx,J_vy,lambda_obs,eta_obs,"
+              "comp_residual,v_normal,v_tangential,selected_candidate,"
+              "solve_nlambda,rollout_nlambda,obstacle_cost_active,"
+              "obstacle_lcs_contact_active\n";
     swept.open(d + "/reposition_swept_collision.csv");
     swept << std::setprecision(9)
           << "reposition_event_id,n_samples,min_pusher_swept_distance,margin,"
              "worst_ee_x,worst_ee_y,safe\n";
-    if (!cyc || !cand || !qp || !qpv || !innerobs || !pushfilt || !swept) return;
+    if (!cyc || !cand || !qp || !qpv || !innerobs || !pushfilt || !swept ||
+        !obslcs) return;
     innerobs << std::setprecision(9);
     innerobs << "time,event_id,candidate_id,inner_mode,rank_mode,"
                 "nom_term_x,nom_term_y,mod_term_x,mod_term_y,"
@@ -148,8 +157,10 @@ struct ObsExtConfig {
   double eps_rho = 1e-8;    // numerical epsilon in rho_bar = sqrt(r.r + eps^2)
   double d_ref = 0.05;      // reciprocal-square calibration clearance
   double recip_min_denom = 0.005;
-  bool nonpen = false;          // Stage 2.1: object-obstacle nonpenetration constraint
-  double nonpen_margin = 0.01;  // object_obstacle.margin
+  bool nonpen = false;          // legacy QP-halfspace nonpen (qp_halfspace_legacy)
+  bool lcs_contact = false;     // obstacle as frictionless LCS contact (lcs_contact)
+  int n_obs_slots = 2;          // N_closest fixed obstacle-contact slots
+  double nonpen_margin = 0.01;  // object_obstacle.margin (obs_margin)
   bool pusher_filter = false;   // Stage 2.2: pusher-obstacle candidate rejection
   double pusher_margin = 0.01;  // pusher_obstacle.margin
   double pusher_radius = 0.025; // conservative pusher-tip sphere radius (m)
@@ -178,6 +189,179 @@ inline const std::vector<std::pair<double, double>>& TFootprint() {
   }();
   return pts;
 }
+// ---------------------------------------------------------------------------
+// lcs_contact mode (SAMPLING_C3_OBSTACLE_MODE=lcs_contact): the obstacle is a
+// frictionless normal contact INSIDE the LCS, per the C3+ design notes:
+//   0 <= lambda_obs  PERP  J_obs v_{k+1} + phi/dt >= 0,
+//   J_obs = [(r x n)^T over object omega slots, n^T over object v slots].
+// Fixed n_obs_slots contact slots (N_closest); inactive slots are padded with a
+// zero Jacobian and a large positive gap so lambda is forced to 0.
+// ---------------------------------------------------------------------------
+struct ObsLcsContact {
+  int obstacle_id = -1;    // -1 = inactive padding slot
+  double d_raw = 1e9;      // closest-footprint signed distance (pre-margin)
+  double phi = 1.0;        // margin-adjusted gap fed to the LCS
+  double nx = 0, ny = 0;   // world push-away normal (obstacle -> object)
+  double wx = 0, wy = 0;   // object witness point (world)
+  double owx = 0, owy = 0; // obstacle witness point (world, on disc surface)
+  double rx = 0, ry = 0;   // lever arm: witness - object body-frame origin
+  double rxn = 0;          // (r x n)_z  -> yaw coupling
+  bool active = false;
+};
+
+// Closest T-footprint point per obstacle disc; keep the n_slots smallest-phi
+// obstacles (N_closest); pad the rest. Uses the object pose in x_lcs
+// (quat 3-6, position 7-8) and the same TFootprint() as the legacy nonpen.
+inline std::vector<ObsLcsContact> ComputeObstacleLcsContacts(
+    const Eigen::VectorXd& x_lcs,
+    const std::vector<std::vector<double>>& obstacles, double margin,
+    int n_slots) {
+  const double yaw = YawWXYZ(x_lcs(3), x_lcs(4), x_lcs(5), x_lcs(6));
+  const double cs = std::cos(yaw), sn = std::sin(yaw);
+  const double ox = x_lcs(7), oy = x_lcs(8);
+  std::vector<ObsLcsContact> all;
+  for (int oi = 0; oi < (int)obstacles.size(); ++oi) {
+    const auto& o = obstacles[oi];
+    ObsLcsContact ct;
+    ct.obstacle_id = oi;
+    for (const auto& b : TFootprint()) {
+      const double wx = ox + cs * b.first - sn * b.second;
+      const double wy = oy + sn * b.first + cs * b.second;
+      const double dd = std::hypot(wx - o[0], wy - o[1]);
+      if (dd < 1e-9) continue;
+      const double d = dd - o[2];
+      if (d < ct.d_raw) {
+        ct.d_raw = d;
+        ct.nx = (wx - o[0]) / dd;
+        ct.ny = (wy - o[1]) / dd;
+        ct.wx = wx;
+        ct.wy = wy;
+        ct.owx = o[0] + ct.nx * o[2];
+        ct.owy = o[1] + ct.ny * o[2];
+      }
+    }
+    ct.phi = ct.d_raw - margin;
+    ct.rx = ct.wx - ox;
+    ct.ry = ct.wy - oy;
+    ct.rxn = ct.rx * ct.ny - ct.ry * ct.nx;
+    ct.active = true;
+    all.push_back(ct);
+  }
+  std::sort(all.begin(), all.end(),
+            [](const ObsLcsContact& a, const ObsLcsContact& b) {
+              return a.phi < b.phi;
+            });
+  all.resize(std::min((int)all.size(), n_slots));
+  while ((int)all.size() < n_slots) all.push_back(ObsLcsContact{});
+  return all;
+}
+
+// Append one frictionless complementarity row/column per obstacle slot to an
+// LCSFactory-produced (UNscaled) Anitescu LCS. All couplings are exact:
+//   D_new col = [dt^2 N Minv Jo^T ; dt Minv Jo^T]
+//   E_new row = [Jo A_vq + Jo N+ / dt , Jo A_vv]   (A blocks encode dt*Jf_q/v)
+//   F cross   = Jo * D_vel_old  (= dt Jo Minv Jc^T, both directions)
+//   H_new row = Jo * B_vel      (= dt Jo Jf_u)
+//   c_new     = phi/dt + Jo d_vel - (Jo N+ / dt) q0
+// The solver applies its own AnDn scaling afterwards, uniformly.
+inline c3::LCS AugmentLcsWithObstacleContacts(
+    const c3::LCS& lcs, const std::vector<ObsLcsContact>& contacts,
+    const Eigen::MatrixXd& M, const Eigen::MatrixXd& qdotNv,
+    const Eigen::MatrixXd& vNqdot, const Eigen::VectorXd& q0, int n_q, int n_v,
+    int n_u) {
+  const int n_x = n_q + n_v;
+  const int nlam = lcs.D()[0].cols();
+  const int ns = contacts.size();
+  const double dt = lcs.dt();
+  const Eigen::MatrixXd& A = lcs.A()[0];
+  const Eigen::MatrixXd& B = lcs.B()[0];
+  const Eigen::MatrixXd& D0 = lcs.D()[0];
+  const Eigen::VectorXd& d0 = lcs.d()[0];
+  const Eigen::MatrixXd& E0 = lcs.E()[0];
+  const Eigen::MatrixXd& F0 = lcs.F()[0];
+  const Eigen::MatrixXd& H0 = lcs.H()[0];
+  const Eigen::VectorXd& c0 = lcs.c()[0];
+
+  Eigen::MatrixXd D(n_x, nlam + ns), E(nlam + ns, n_x), H(nlam + ns, n_u);
+  Eigen::MatrixXd F = Eigen::MatrixXd::Zero(nlam + ns, nlam + ns);
+  Eigen::VectorXd c(nlam + ns);
+  D.leftCols(nlam) = D0;
+  E.topRows(nlam) = E0;
+  H.topRows(nlam) = H0;
+  F.topLeftCorner(nlam, nlam) = F0;
+  c.head(nlam) = c0;
+
+  const Eigen::MatrixXd A_vq = A.block(n_q, 0, n_v, n_q);
+  const Eigen::MatrixXd A_vv = A.block(n_q, n_q, n_v, n_v);
+  const Eigen::MatrixXd B_vel = B.block(n_q, 0, n_v, n_u);
+  const Eigen::MatrixXd D_vel_old = D0.block(n_q, 0, n_v, nlam);
+  const Eigen::VectorXd d_vel = d0.tail(n_v);
+  auto M_ldlt = M.ldlt();
+
+  std::vector<Eigen::VectorXd> Jo_rows(ns), MinvJo(ns);
+  for (int s = 0; s < ns; ++s) {
+    Eigen::VectorXd Jo = Eigen::VectorXd::Zero(n_v);
+    if (contacts[s].active) {
+      Jo(5) = contacts[s].rxn;  // object omega_z
+      Jo(6) = contacts[s].nx;   // object v_x
+      Jo(7) = contacts[s].ny;   // object v_y
+    }
+    Jo_rows[s] = Jo;
+    MinvJo[s] = M_ldlt.solve(Jo);
+  }
+  for (int s = 0; s < ns; ++s) {
+    const Eigen::VectorXd& Jo = Jo_rows[s];
+    const int row = nlam + s;
+    // Dynamics column.
+    D.col(row).head(n_q) = dt * dt * qdotNv * MinvJo[s];
+    D.col(row).tail(n_v) = dt * MinvJo[s];
+    // Complementarity row.
+    E.row(row).head(n_q) =
+        (Jo.transpose() * A_vq + Jo.transpose() * vNqdot / dt);
+    E.row(row).tail(n_v) = Jo.transpose() * A_vv;
+    H.row(row) = Jo.transpose() * B_vel;
+    // Delassus coupling with the existing contacts (exact, symmetric).
+    F.row(row).head(nlam) = Jo.transpose() * D_vel_old;
+    F.col(row).head(nlam) = (Jo.transpose() * D_vel_old).transpose();
+    for (int s2 = 0; s2 <= s; ++s2) {
+      const double fij = dt * Jo.dot(MinvJo[s2]);
+      F(row, nlam + s2) = fij;
+      F(nlam + s2, row) = fij;
+    }
+    if (!contacts[s].active) F(row, row) = 1e-8;  // keep F well-posed
+    c(row) = contacts[s].phi / dt + Jo.dot(d_vel) -
+             (Jo.transpose() * vNqdot / dt).dot(q0);
+  }
+  return c3::LCS(A, B, D, d0, E, F, H, c, lcs.N(), dt);
+}
+
+// Expand a z-ordered [x | lambda | u | eta] diagonal cost matrix (G or U) by
+// ns obstacle slots, inserting after the lambda block and after the eta block.
+// New diagonal entries copy the last existing lambda / eta weights.
+inline Eigen::MatrixXd ExpandGUForObstacleSlots(const Eigen::MatrixXd& Min,
+                                                int n_x, int nlam_old, int n_u,
+                                                int ns) {
+  const int nz_old = n_x + 2 * nlam_old + n_u;
+  if (Min.rows() != nz_old || Min.cols() != nz_old) {
+    // Constructor-time placeholder G/U (sized differently; values are
+    // overwritten by UpdateCostMatrices every tick before any real solve) —
+    // return an identity of the augmented size instead of expanding.
+    return Eigen::MatrixXd::Identity(n_x + 2 * (nlam_old + ns) + n_u,
+                                     n_x + 2 * (nlam_old + ns) + n_u);
+  }
+  const int nz = n_x + 2 * (nlam_old + ns) + n_u;
+  Eigen::VectorXd diag_old = Min.diagonal();
+  Eigen::VectorXd diag(nz);
+  const double w_lam = diag_old(n_x + nlam_old - 1);
+  const double w_eta = diag_old(nz_old - 1);
+  diag.segment(0, n_x + nlam_old) = diag_old.segment(0, n_x + nlam_old);
+  diag.segment(n_x + nlam_old, ns).setConstant(w_lam);
+  diag.segment(n_x + nlam_old + ns, n_u + nlam_old) =
+      diag_old.segment(n_x + nlam_old, n_u + nlam_old);
+  diag.segment(n_x + nlam_old + ns + n_u + nlam_old, ns).setConstant(w_eta);
+  return diag.asDiagonal();
+}
+
 inline ObsExtConfig& ObsCfg() {
   static ObsExtConfig c;
   if (!c.loaded) {
@@ -192,8 +376,18 @@ inline ObsExtConfig& ObsCfg() {
     if (rm && std::string(rm) == "inverse_square") c.rank = ObsRank::kInvSq;
     const char* tr = std::getenv("SAMPLING_C3_OBS_TRUST");
     if (tr) c.trust = std::atof(tr);
+    // Preferred selector. "qp_halfspace_legacy" == old SAMPLING_C3_OBJ_NONPEN=1;
+    // "lcs_contact" = frictionless obstacle contact inside the LCS (no cost).
+    const char* om = std::getenv("SAMPLING_C3_OBSTACLE_MODE");
+    if (om) {
+      std::string s(om);
+      if (s == "qp_halfspace_legacy") c.nonpen = true;
+      else if (s == "lcs_contact") c.lcs_contact = true;
+    }
     const char* np = std::getenv("SAMPLING_C3_OBJ_NONPEN");
     if (np && std::string(np) == "1") c.nonpen = true;
+    const char* ns = std::getenv("SAMPLING_C3_OBS_SLOTS");
+    if (ns) c.n_obs_slots = std::max(1, std::atoi(ns));
     const char* nm = std::getenv("SAMPLING_C3_OBJ_MARGIN");
     if (nm) c.nonpen_margin = std::atof(nm);
     const char* pf = std::getenv("SAMPLING_C3_PUSHER_FILTER");
@@ -346,6 +540,24 @@ SamplingC3Controller::SamplingC3Controller(
           controller_params_.sampling_c3_options.contact_model),
       sampling_c3_options_.num_contacts.value(),
       sampling_c3_options_.num_friction_directions_per_contact.value());
+
+  // lcs_contact mode: append fixed frictionless obstacle-contact slots to the
+  // LCS. Everything downstream (placeholder, G/U, z slicing, projection) sizes
+  // itself from the augmented n_lambda_.
+  if (ObsCfg().lcs_contact &&
+      !controller_params_.scenario_params.obstacles.empty()) {
+    n_obs_slots_lcs_ = ObsCfg().n_obs_slots;
+    n_lambda_ += n_obs_slots_lcs_;
+    const int nlam_old = n_lambda_ - n_obs_slots_lcs_;
+    for (auto& g : G_)
+      g = ExpandGUForObstacleSlots(g, n_x_, nlam_old, n_u_, n_obs_slots_lcs_);
+    for (auto& u : U_)
+      u = ExpandGUForObstacleSlots(u, n_x_, nlam_old, n_u_, n_obs_slots_lcs_);
+    std::cout << "[OBS-LCS] lcs_contact ACTIVE: n_obs_slots="
+              << n_obs_slots_lcs_ << " n_lambda=" << n_lambda_
+              << " obstacle_cost_active=false obstacle_lcs_contact_active=true"
+              << std::endl;
+  }
 
   // Placeholder LCS will have correct size as it's already determined by the
   // contact model.
@@ -1294,6 +1506,7 @@ drake::systems::EventStatus SamplingC3Controller::ComputePlan(
     // ---- OPTIONAL inner-QP obstacle-aware refinement (env-gated; PASS 2) ----
     // With mode "none" this whole block is skipped -> identical to baseline.
     if ((ObsCfg().inner != ObsInner::kNone || ObsCfg().nonpen) &&
+        !ObsCfg().lcs_contact &&
         controller_params_.scenario_params.obstacle_cost_weight > 0.0 &&
         !controller_params_.scenario_params.obstacles.empty()) {
       const auto& scen = controller_params_.scenario_params;
@@ -1437,7 +1650,11 @@ drake::systems::EventStatus SamplingC3Controller::ComputePlan(
     // predicted object path for every scenario obstacle disc [x, y, r]
     // (scenario_params.yaml; scenarios without obstacles pay nothing).
     const auto& scenario = controller_params_.scenario_params;
-    if (scenario.obstacle_cost_weight > 0.0 && !scenario.obstacles.empty()) {
+    // In lcs_contact mode NO obstacle objective is applied anywhere: obstacle
+    // behavior comes only from the augmented LCS contact (J_rank has no
+    // obstacle-potential contribution).
+    if (scenario.obstacle_cost_weight > 0.0 && !scenario.obstacles.empty() &&
+        !ObsCfg().lcs_contact) {
       double obstacle_cost = 0.0;
       const ObsRank rmode = ObsCfg().rank;  // default kExp == frozen baseline
       for (const VectorXd& xk : cost_trajectory_pair.second) {
@@ -1535,6 +1752,60 @@ drake::systems::EventStatus SamplingC3Controller::ComputePlan(
                       1);
   } else {
     force_c3_mode = true;
+  }
+
+  // ---- lcs_contact mode: per-cycle obstacle-contact logging (§14) ----
+  // Recompute the (deterministic) witness data and read lambda/eta from the
+  // best candidate's solution at knot 0 (unscaled units).
+  if (n_obs_slots_lcs_ > 0 && CostLogger::Get().active()) {
+    const auto contacts = ComputeObstacleLcsContacts(
+        x_lcs_curr, controller_params_.scenario_params.obstacles,
+        ObsCfg().nonpen_margin, n_obs_slots_lcs_);
+    // The best sample may be a buffer-augmented candidate with no entry in
+    // lcs_candidates/c3_objects — fall back to the current location (the
+    // obstacle rows are identical across candidates: same object pose).
+    int best = (int)best_sample_index_;
+    if (best >= (int)c3_objects.size() || !c3_objects.at(best))
+      best = (int)SampleIndex::kCurrentLocation;
+    const auto& c3obj = c3_objects.at(best);
+    const LCS& lcs_sel = lcs_candidates.at(
+        best < (int)lcs_candidates.size()
+            ? best
+            : (int)SampleIndex::kCurrentLocation);
+    Eigen::VectorXd lam0 = c3obj->GetForceSolution().at(0);
+    Eigen::VectorXd u0 = c3obj->GetInputSolution().at(0);
+    Eigen::VectorXd x0 = c3obj->GetStateSolution().at(0);
+    // eta at knot 0 from the UNscaled augmented LCS matrices (the solver's
+    // internal scaling is undone on lambda by GetForceSolution).
+    Eigen::VectorXd eta0 = lcs_sel.E()[0] * x0 + lcs_sel.F()[0] * lam0 +
+                           lcs_sel.H()[0] * u0 + lcs_sel.c()[0];
+    const double wz = x_lcs_curr(15), vx = x_lcs_curr(16), vy = x_lcs_curr(17);
+    const int nlam_old = n_lambda_ - n_obs_slots_lcs_;
+    for (int s = 0; s < n_obs_slots_lcs_; ++s) {
+      const auto& ct = contacts[s];
+      const double lam_s = lam0(nlam_old + s);
+      const double eta_s = eta0(nlam_old + s);
+      const double vn = ct.rxn * wz + ct.nx * vx + ct.ny * vy;
+      const double vt = -ct.ny * vx + ct.nx * vy;
+      CostLogger::Get().obslcs
+          << 0.0 << "," << CostLogger::Get().event_id << "," << s << ","
+          << ct.obstacle_id << "," << (ct.active ? 1 : 0) << "," << ct.d_raw
+          << "," << ct.phi << "," << ct.wx << "," << ct.wy << "," << ct.owx
+          << "," << ct.owy << "," << ct.nx << "," << ct.ny << ","
+          << x_lcs_curr(7) << "," << x_lcs_curr(8) << "," << ct.rx << ","
+          << ct.ry << "," << ct.rxn << "," << ct.rxn << "," << ct.nx << ","
+          << ct.ny << "," << lam_s << "," << eta_s << "," << lam_s * eta_s
+          << "," << vn << "," << vt << "," << best << ","
+          << lcs_sel.D()[0].cols() << ","
+          << lcs_candidates_for_cost
+                 .at(best < (int)lcs_candidates_for_cost.size()
+                         ? best
+                         : (int)SampleIndex::kCurrentLocation)
+                 .D()[0]
+                 .cols()
+          << ",0,1\n";
+    }
+    CostLogger::Get().obslcs.flush();
   }
 
   if (verbose_) {
@@ -2095,8 +2366,16 @@ void SamplingC3Controller::UpdateCostMatrices(
     discount_factor *= c3_options.gamma;
     if (i < N_) {
       R_.push_back(discount_factor * c3_options.R);
-      G_.push_back(c3_options.G);
-      U_.push_back(c3_options.U);
+      if (n_obs_slots_lcs_ > 0) {
+        const int nlam_old = n_lambda_ - n_obs_slots_lcs_;
+        G_.push_back(ExpandGUForObstacleSlots(c3_options.G, n_x_, nlam_old,
+                                              n_u_, n_obs_slots_lcs_));
+        U_.push_back(ExpandGUForObstacleSlots(c3_options.U, n_x_, nlam_old,
+                                              n_u_, n_obs_slots_lcs_));
+      } else {
+        G_.push_back(c3_options.G);
+        U_.push_back(c3_options.U);
+      }
     }
   }
 
@@ -2210,6 +2489,23 @@ SamplingC3Controller::CreateLCSObjectsForSamples(
   std::vector<LCS> lcs_candidates;
   std::vector<LCS> lcs_candidates_for_cost;
 
+  // lcs_contact mode: obstacle witness data (shared by all candidates — they
+  // differ only in EE position) plus the mass matrix and q<->v maps needed for
+  // the exact augmentation. Computed at the current state's context.
+  std::vector<ObsLcsContact> obs_contacts;
+  Eigen::MatrixXd obs_M, obs_qdotNv, obs_vNqdot;
+  if (n_obs_slots_lcs_ > 0) {
+    obs_contacts = ComputeObstacleLcsContacts(
+        x_lcs_curr, controller_params_.scenario_params.obstacles,
+        ObsCfg().nonpen_margin, n_obs_slots_lcs_);
+    UpdateContext(n_q_, n_v_, n_u_, plant_, context_, plant_ad_, context_ad_,
+                  x_lcs_curr);
+    obs_M.resize(n_v_, n_v_);
+    plant_.CalcMassMatrix(*context_, &obs_M);
+    obs_qdotNv = Eigen::MatrixXd(plant_.MakeVelocityToQDotMap(*context_));
+    obs_vNqdot = Eigen::MatrixXd(plant_.MakeQDotToVelocityMap(*context_));
+  }
+
   int num_total_samples = candidate_states.size();
   for (int i = 0; i < num_total_samples; i++) {
     // Context needs to be updated to create the LCS objects.
@@ -2227,6 +2523,11 @@ SamplingC3Controller::CreateLCSObjectsForSamples(
         LCSFactory(plant_, *context_, plant_ad_, *context_ad_,
                    resolved_contact_pairs, lcs_factory_options)
             .GenerateLCS();
+    if (n_obs_slots_lcs_ > 0) {
+      lcs_object_sample = AugmentLcsWithObstacleContacts(
+          lcs_object_sample, obs_contacts, obs_M, obs_qdotNv, obs_vNqdot,
+          candidate_states[i].head(n_q_), n_q_, n_v_, n_u_);
+    }
     lcs_candidates.push_back(lcs_object_sample);
 
     // Create different LCS objects for cost calculation.
@@ -2252,6 +2553,14 @@ SamplingC3Controller::CreateLCSObjectsForSamples(
                    resolved_contact_pairs_for_cost_simulation,
                    lcs_factory_options_for_cost)
             .GenerateLCS();
+    if (n_obs_slots_lcs_ > 0) {
+      // Same contacts, same math — the fine dt comes from the LCS itself, so
+      // solve and rollout share one obstacle-contact model (phi, n, r, J).
+      lcs_object_sample_for_cost_simulation = AugmentLcsWithObstacleContacts(
+          lcs_object_sample_for_cost_simulation, obs_contacts, obs_M,
+          obs_qdotNv, obs_vNqdot, candidate_states[i].head(n_q_), n_q_, n_v_,
+          n_u_);
+    }
     lcs_candidates_for_cost.push_back(lcs_object_sample_for_cost_simulation);
   }
 
