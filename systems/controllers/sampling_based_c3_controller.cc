@@ -155,6 +155,7 @@ struct ObsExtConfig {
   double pusher_radius = 0.025; // conservative pusher-tip sphere radius (m)
   bool swept_check = false;     // Stage 2.3: reposition swept-path pusher check
   double swept_res = 0.005;     // reposition_swept_check.spatial_resolution (m)
+  int oracle = 0;               // diagnostic: 0 none, 1 left detour, 2 right detour
   bool loaded = false;
 };
 // T footprint boundary sample points in the object (vertical_link) frame:
@@ -201,6 +202,12 @@ inline ObsExtConfig& ObsCfg() {
     if (pm) c.pusher_margin = std::atof(pm);
     const char* sw = std::getenv("SAMPLING_C3_SWEPT_CHECK");
     if (sw && std::string(sw) == "1") c.swept_check = true;
+    const char* orc = std::getenv("SAMPLING_C3_ORACLE_ROUTE");
+    if (orc) {
+      std::string s(orc);
+      if (s == "left") c.oracle = 1;
+      else if (s == "right") c.oracle = 2;
+    }
   }
   return c;
 }
@@ -1189,6 +1196,25 @@ drake::systems::EventStatus SamplingC3Controller::ComputePlan(
     // Set up C3 with proper projection type and post-solve cost matrices.
     std::shared_ptr<C3> test_c3_object;
     std::vector<VectorXd> x_desired(N_ + 1, x_lcs_des.value());
+    // ---- DIAGNOSTIC: oracle lateral-detour sub-goal (env-gated causal test) ----
+    // NOT a proposed solution; a hand-crafted 2-phase route to test whether the
+    // obstacle handling + control can execute a detour when the SUB-GOAL points
+    // around the obstacle (isolates route generation as the blocker).
+    if (ObsCfg().oracle != 0 &&
+        !controller_params_.scenario_params.obstacles.empty()) {
+      const auto& o = controller_params_.scenario_params.obstacles[0];
+      double side = (ObsCfg().oracle == 1) ? -1.0 : 1.0;  // left(-x) / right(+x)
+      double oy_now = x_lcs_curr(8);
+      double tx, ty;
+      if (oy_now > o[1] - o[2] - 0.03) {  // still north of the obstacle -> detour
+        tx = o[0] + side * (o[2] + 0.08);
+        ty = o[1] - o[2] - 0.06;
+      } else {  // past the obstacle -> aim at the true goal
+        tx = 0.5;
+        ty = -0.30;
+      }
+      for (auto& xd : x_desired) { xd(7) = tx; xd(8) = ty; }
+    }
 
     C3::CostMatrices c3_costmat(Q_, R_, G_, U_);
     if (sampling_c3_options_.projection_type == "MIQP") {

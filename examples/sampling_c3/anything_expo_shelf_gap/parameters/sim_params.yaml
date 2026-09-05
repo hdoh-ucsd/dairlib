@@ -1,0 +1,15 @@
+object_model: examples/sampling_c3/urdf/expo_box/expo_box.sdf
+object_models: [examples/sampling_c3/urdf/expo_box/expo_box.sdf]
+franka_publish_rate: 1000
+object_publish_rate: 10
+actuator_delay: 0.000
+
+visualize_drake_sim: false
+publish_efforts: true
+
+dt: 0.001
+realtime_rate: 1
+
+q_init_franka: [2.191, 1.1, -1.33, -2.22, 1.30, 2.02, 0.08]
+q_init_object: [1.0, 0, 0, 0, 0.5, 0.3, 0.0339]
+q_init_objects: [[1.0, 0, 0, 0, 0.5, 0.3, 0.0339]]
